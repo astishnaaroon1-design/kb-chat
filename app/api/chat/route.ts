@@ -5,13 +5,15 @@ import { embedText } from '@/lib/gemini'
 export const runtime = 'nodejs'
 export const maxDuration = 60
 
-// 2026-Compliant Free Models List on OpenRouter
+// 2026-Compliant Free Models List on OpenRouter (Prioritizing elite coding models)
 const FREE_MODELS = [
-  'meta-llama/llama-3.3-70b-instruct:free',  // High-performance coding model
-  'deepseek/deepseek-v4-flash:free',         // Fast, logical developer model
-  'openrouter/free',                         // Evergreen backup router
-  // ...
+  'meta-llama/llama-3.3-70b-instruct:free',  // 1. High-performance logic and coding model
+  'deepseek/deepseek-v4-flash:free',         // 2. High-speed mixture-of-experts
+  'openrouter/free',                         // 3. Evergreen Free Router backup
+  'google/gemma-4-31b-it:free',              // 4. Google's Gemma 4 free model
+  'openai/gpt-oss-120b:free'                 // 5. OpenAI gpt-oss-120b free model
 ]
+
 export async function POST(req: NextRequest) {
   try {
     const { messages, question } = await req.json()
@@ -49,17 +51,25 @@ export async function POST(req: NextRequest) {
       memoriesContext = relevantMemories.map((m: any, i: number) => `- ${m.content}`).join('\n')
     }
 
-    // 6. Blend them into the system prompt with strict "Thinking" instructions
-    let systemPrompt = `You are a helpful AI assistant. 
-    
+    // 6. Blend them into the AI system prompt (Senior Developer Persona)
+    let systemPrompt = `You are "Suite Copilot", an expert quantitative software architect, elite programmer, and computer science mentor. 
+    When writing code, you always:
+    - Output production-grade, secure, and highly optimized code.
+    - Include clear, helpful comments explaining complex logic.
+    - Strictly use the correct Markdown language tags for code blocks so they render with proper syntax highlighting.
+    - Avoid placeholders, shorthand notations, or "TODOs" in your code blocks; write the complete, functional implementation.
+
     CRITICAL REQUIREMENT: Before writing your actual answer, you MUST write down your step-by-step thinking process, analysis, and retrieval planning inside a <thinking>...</thinking> block.
     Once you close the </thinking> block, write your final response using your uploaded documents and memories.
     
     Example output structure:
     <thinking>
-    I am analyzing the user's question... I found matching facts in the memory bank...
+    I am analyzing the user's coding request... I will retrieve the preferred libraries...
     </thinking>
-    Here is the answer to your question based on my memory...`
+    Here is the complete, commented TypeScript code:
+    \`\`\`typescript
+    // code here
+    \`\`\``
     
     if (context) {
       systemPrompt += `\n\nUploaded Knowledge Base Content:\n${context}`
@@ -129,15 +139,17 @@ export async function POST(req: NextRequest) {
           body: JSON.stringify({
             model: modelName,
             messages: payloadMessages,
-            stream: true // Stream is back!
+            stream: true
           })
         })
 
         if (openRouterRes.ok) {
           const contentType = openRouterRes.headers.get('content-type') || ''
+          
           if (contentType.includes('application/json')) {
             const json = await openRouterRes.json()
-            console.warn(`Model ${modelName} returned flat JSON error:`, json)
+            const errMsg = json.error?.message || json.message || 'JSON error returned instead of stream'
+            console.warn(`Model ${modelName} returned flat JSON error:`, errMsg)
             continue 
           }
 
