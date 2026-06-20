@@ -167,6 +167,14 @@ export async function POST(req: NextRequest) {
                 if (data === '[DONE]') break
                 try {
                   const parsed = JSON.parse(data)
+                  
+                  // IF OpenRouter streams an error block inside the 200 stream, catch it and show it to the user!
+                  if (parsed.error) {
+                    const errMsg = parsed.error.message || 'Stream error occurred'
+                    controller.enqueue(encoder.encode(`data: ${JSON.stringify({ text: `\n\n[OpenRouter Stream Error: ${errMsg}]\n\n` })}\n\n`))
+                    break
+                  }
+
                   const text = parsed.choices?.[0]?.delta?.content
                   if (text) {
                     controller.enqueue(encoder.encode(`data: ${JSON.stringify({ text })}\n\n`))
