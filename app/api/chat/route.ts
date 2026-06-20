@@ -2,10 +2,11 @@ import { NextRequest } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
 import { embedText } from '@/lib/gemini'
 
-export const runtime = 'nodejs'
-export const maxDuration = 60
+// We switch to Vercel's Edge Runtime. This bypasses the 10-second execution limit,
+// allowing the stream to continue for as long as needed to write long code blocks!
+export const runtime = 'edge'
 
-// 2026-Compliant Free Models List on OpenRouter (Prioritizing elite coding models)
+// 2026-Compliant Free Models List on OpenRouter
 const FREE_MODELS = [
   'meta-llama/llama-3.3-70b-instruct:free',  // 1. High-performance logic and coding model
   'deepseek/deepseek-v4-flash:free',         // 2. High-speed mixture-of-experts
@@ -19,7 +20,7 @@ export async function POST(req: NextRequest) {
     const { messages, question } = await req.json()
     if (!question) return new Response(JSON.stringify({ error: 'question required' }), { status: 400 })
 
-    // 1. Generate embedding coordinates using Gemini (free and high-limit)
+    // 1. Generate embedding coordinates using Gemini
     const queryEmbedding = await embedText(question)
 
     // 2. Perform Hybrid Search on uploaded documents (chunks)
@@ -60,6 +61,7 @@ export async function POST(req: NextRequest) {
     - Avoid placeholders, shorthand notations, or "TODOs" in your code blocks; write the complete, functional implementation.
 
     CRITICAL REQUIREMENT: Before writing your actual answer, you MUST write down your step-by-step thinking process, analysis, and retrieval planning inside a <thinking>...</thinking> block.
+    Keep your <thinking> block highly concise and brief (under 3-4 sentences) so that you get straight to writing your code and avoid lag.
     Once you close the </thinking> block, write your final response using your uploaded documents and memories.
     
     Example output structure:
