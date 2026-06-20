@@ -5,11 +5,11 @@ import { embedText } from '@/lib/gemini'
 export const runtime = 'nodejs'
 
 const FREE_MODELS = [
-  'google/gemini-2.5-flash:free',
+  'openrouter/free',
+  'deepseek/deepseek-v4-flash:free',
+  'google/gemma-4-31b-it:free',
   'meta-llama/llama-3.3-70b-instruct:free',
-  'deepseek/deepseek-chat:free',
-  'qwen/qwen-2.5-72b-instruct:free',
-  'microsoft/phi-3-medium-128k-instruct:free',
+  'openai/gpt-oss-120b:free'
 ]
 
 export async function POST(req: NextRequest) {
