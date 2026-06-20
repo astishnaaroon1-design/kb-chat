@@ -15,7 +15,7 @@ interface ChatSession {
   created_at: string
 }
 
-// Helper to parse thoughts from streaming content
+// 1. Helper function to parse and clean conversational text from any backend tool codes
 function parseThinkingAndContent(text: string) {
   const thinkingRegex = /<thinking>([\s\S]*?)(?:<\/thinking>|$)/i
   const match = text.match(thinkingRegex)
@@ -31,6 +31,9 @@ function parseThinkingAndContent(text: string) {
       isThinkingComplete = true
     }
   }
+
+  // Trim out any [TOOL: ...] block so the user only sees clean conversation
+  content = content.replace(/\[TOOL:\s*.*\]/g, '').trim()
   
   return { thinking, content, isThinkingComplete }
 }
@@ -228,61 +231,8 @@ export default function ChatPanel() {
 
     if (textareaRef.current) textareaRef.current.style.height = 'auto'
 
-    // ================================================================
-    // INTERCEPTOR: If the message starts with /build or /ceo, run the company loop!
-    // ================================================================
-    if (question.startsWith('/build ') || question.startsWith('/ceo ')) {
-      const goal = question.replace(/^\/(build|ceo)\s+/i, '').trim()
-      
-      // 1. Instantly display the CEO Initialization Card to the user
-      const ceoCardText = `### CEO Agent Initialized 📋\n\nI have received your goal: **"${goal}"**.\n\nI am currently breaking down this request, establishing employee workflows, and generating a shared task checklist. Please wait a moment while the team gets to work...`
-      
-      setMessages(prev => [...prev, { role: 'assistant', content: ceoCardText }])
-      setLoading(false) // Turn off main input loading state
-
-      try {
-        // Save the CEO's card to database history
-        await supabase.from('chat_messages').insert({
-          session_id: activeSessionId,
-          role: 'assistant',
-          content: ceoCardText,
-        })
-
-        // 2. Trigger the CEO API Route to build the checklist
-        const ceoRes = await fetch('/api/agents/ceo', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ goal, sessionId: activeSessionId })
-        })
-
-        if (!ceoRes.ok) {
-          const errData = await ceoRes.json().catch(() => ({}))
-          throw new Error(errData.error || 'CEO planning failed')
-        }
-
-        const ceoData = await ceoRes.json()
-        console.log(`CEO successfully logged tasks. Checklist items:`, ceoData.tasks_created)
-
-        // 3. Immediately trigger the Supervisor Agent to kick off the employee chain!
-        fetch('/api/agents/supervisor', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' }
-        }).catch(err => console.error('Error starting supervisor from chat:', err))
-
-      } catch (err: any) {
-        console.error('AI Company initiation failure:', err)
-        setMessages(prev => [...prev, { 
-          role: 'assistant', 
-          content: `### Company Project Failed ⚠️\n\nThe CEO Agent hit an error: *"${err.message}"*. Please verify your database tables exist and try again.` 
-        }])
-      }
-      return // Exit early since we ran the company loop!
-    }
-
-    // ================================================================
-    // STANDARD CHAT EXECUTION (OpenRouter stream + memories)
-    // ================================================================
     try {
+      // Save user message to database
       await supabase.from('chat_messages').insert({
         session_id: activeSessionId,
         role: 'user',
@@ -300,6 +250,7 @@ export default function ChatPanel() {
         setSessions(prev => prev.map(s => s.id === activeSessionId ? { ...s, title: shortenedTitle } : s))
       }
 
+      // Fetch stream answer from the CEO Agent
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -397,7 +348,7 @@ export default function ChatPanel() {
 
   return (
     <div className="flex flex-1 h-screen overflow-hidden min-w-0">
-      {/* Middle Sidebar (Conversations) */}
+      {/* Left Sidebar (Conversations only - Upload has been removed!) */}
       <div className="w-56 flex-shrink-0 bg-[#0b0e14] border-r border-white/5 flex flex-col h-full">
         <div className="p-3 border-b border-white/5 flex items-center justify-between">
           <span className="text-xs font-semibold text-gray-400">Conversations</span>
@@ -438,10 +389,10 @@ export default function ChatPanel() {
         <header className="flex items-center justify-between px-6 py-3.5 border-b border-white/8 flex-shrink-0">
           <div className="flex items-center gap-3">
             <h1 className="text-sm font-semibold text-white">
-              {sessions.find(s => s.id === activeSessionId)?.title || 'Knowledge Base Chat'}
+              {sessions.find(s => s.id === activeSessionId)?.title || 'Suite Copilot'}
             </h1>
             <span className="text-[11px] text-gray-500 bg-white/6 px-2 py-0.5 rounded-full">
-              Gemini 2.5 Flash
+              CEO Agent Portal
             </span>
           </div>
         </header>
@@ -456,9 +407,9 @@ export default function ChatPanel() {
                 </svg>
               </div>
               <div className="text-center">
-                <h2 className="text-lg font-semibold text-white mb-2">Chat with your knowledge base</h2>
+                <h2 className="text-lg font-semibold text-white mb-2">CEO Agent Portal</h2>
                 <p className="text-sm text-gray-500 max-w-sm leading-relaxed">
-                  The AI learns dynamically from your documents and your messages.
+                  Discuss project goals, check task progress, or add sub-tasks naturally. Your active developer agents will process them autonomously.
                 </p>
               </div>
             </div>
@@ -482,7 +433,7 @@ export default function ChatPanel() {
                   </div>
                   <div className="flex-1 pt-3.5">
                     <div className="relative w-full h-1 bg-white/5 rounded-full overflow-hidden">
-                      <div className="absolute top-0 left-0 h-full w-1/3 rounded-full bg-gradient-to-r from-blue-600 via-purple-500 to-pink-500" 
+                      <div className="absolute top-0 left-0 h-full w-1/3 rounded-full bg-gradient-to-r from-blue-600 via-purple-500 to-pink-500 animate-shimmer" 
                            style={{ animation: 'shimmer-slide 1.5s infinite linear' }} />
                     </div>
                   </div>
@@ -511,7 +462,7 @@ export default function ChatPanel() {
                 value={input}
                 onChange={e => { setInput(e.target.value); adjustTextarea() }}
                 onKeyDown={handleKeyDown}
-                placeholder="Ask anything about your knowledge base, or type /build [goal] to trigger your AI team…"
+                placeholder="Discuss project plans, check progress, or add sub-tasks naturally..."
                 rows={1}
                 disabled={loading}
                 className="flex-1 bg-transparent text-sm text-gray-200 placeholder-gray-600 resize-none outline-none leading-relaxed disabled:opacity-50"
@@ -530,11 +481,11 @@ export default function ChatPanel() {
               </button>
             </div>
             <p className="text-[10px] text-gray-700 text-center mt-2">
-              Enter to send · Type **`/build [your request]`** to run the agent network
+              Enter to send · Shift+Enter for new line
             </p>
           </div>
         </div>
       </div>
     </div>
   )
-                }
+  }
