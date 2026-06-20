@@ -127,6 +127,16 @@ export async function POST(req: NextRequest) {
         })
 
         if (openRouterRes.ok) {
+          const contentType = openRouterRes.headers.get('content-type') || ''
+          
+          // IF OpenRouter returned a flat JSON instead of a stream, read the error and skip to the next model
+          if (contentType.includes('application/json')) {
+            const json = await openRouterRes.json()
+            const errMsg = json.error?.message || json.message || 'JSON error returned instead of stream'
+            console.warn(`Model ${modelName} returned flat JSON error:`, errMsg)
+            continue // Try the next free model in the list!
+          }
+
           activeStream = openRouterRes
           workingModel = modelName
           break
@@ -168,7 +178,7 @@ export async function POST(req: NextRequest) {
                 try {
                   const parsed = JSON.parse(data)
                   
-                  // IF OpenRouter streams an error block inside the 200 stream, catch it and show it to the user!
+                  // If OpenRouter streams an error block inside the 200 stream, catch it and show it to the user
                   if (parsed.error) {
                     const errMsg = parsed.error.message || 'Stream error occurred'
                     controller.enqueue(encoder.encode(`data: ${JSON.stringify({ text: `\n\n[OpenRouter Stream Error: ${errMsg}]\n\n` })}\n\n`))
