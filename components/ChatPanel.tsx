@@ -21,14 +21,14 @@ export default function ChatPanel() {
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
-  const [streamingContent, setStreamingContent] = useState('')
   const bottomRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages, streamingContent])
+  }, [messages])
 
+  // Fetch chat sessions on load
   useEffect(() => {
     const fetchSessions = async () => {
       try {
@@ -53,6 +53,7 @@ export default function ChatPanel() {
     fetchSessions()
   }, [])
 
+  // Load messages when the active session changes
   useEffect(() => {
     if (!activeSessionId) return
 
@@ -134,18 +135,19 @@ export default function ChatPanel() {
 
     setMessages(updatedMessages)
     setInput('')
-    setStreamingContent('')
     setLoading(true)
 
     if (textareaRef.current) textareaRef.current.style.height = 'auto'
 
     try {
+      // 1. Save user message to database
       await supabase.from('chat_messages').insert({
         session_id: activeSessionId,
         role: 'user',
         content: question,
       })
 
+      // Rename chat session if it's currently named 'New Chat'
       const activeSession = sessions.find(s => s.id === activeSessionId)
       if (activeSession && activeSession.title === 'New Chat') {
         const shortenedTitle = question.length > 25 ? question.slice(0, 22) + '...' : question
@@ -157,6 +159,7 @@ export default function ChatPanel() {
         setSessions(prev => prev.map(s => s.id === activeSessionId ? { ...s, title: shortenedTitle } : s))
       }
 
+      // 2. Fetch answer from API (Non-Streaming!)
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -165,73 +168,28 @@ export default function ChatPanel() {
 
       if (!res.ok) throw new Error('Request failed')
 
-      const reader = res.body!.getReader()
-      const decoder = new TextDecoder()
-      let fullContent = ''
-      let buffer = ''
+      const data = await res.json()
+      const finalContent = data.text || "I was unable to analyze that request."
 
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
+      setMessages(prev => [...prev, { role: 'assistant', content: finalContent }])
 
-        buffer += decoder.decode(value, { stream: true })
-        const lines = buffer.split('\n')
-        
-        buffer = lines.pop() || ''
-
-        for (const line of lines) {
-          const trimmedLine = line.trim()
-          if (trimmedLine.startsWith('data: ')) {
-            const data = trimmedLine.slice(6).trim()
-            if (data === '[DONE]') break
-            try {
-              const parsed = JSON.parse(data)
-              const text = parsed.choices?.[0]?.delta?.content
-              if (text) {
-                fullContent += parsed.text
-                setStreamingContent(fullContent)
-              }
-            } catch (e) {}
-          }
-        }
-      }
-
-      if (buffer) {
-        const trimmedLine = buffer.trim()
-        if (trimmedLine.startsWith('data: ')) {
-          const data = trimmedLine.slice(6).trim()
-          if (data !== '[DONE]') {
-            try {
-              const parsed = JSON.parse(data)
-              const text = parsed.choices?.[0]?.delta?.content
-              if (text) {
-                fullContent += parsed.text
-                setStreamingContent(fullContent)
-              }
-            } catch (e) {}
-          }
-        }
-      }
-
-      setMessages(prev => [...prev, { role: 'assistant', content: fullContent }])
-      setStreamingContent('')
-
+      // 3. Save AI response to database
       await supabase.from('chat_messages').insert({
         session_id: activeSessionId,
         role: 'assistant',
-        content: fullContent,
+        content: finalContent,
       })
 
+      // 4. Trigger the Self-Learning Background Worker
       fetch('/api/learn', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userMessage: question, assistantResponse: fullContent }),
+        body: JSON.stringify({ userMessage: question, assistantResponse: finalContent }),
       }).catch(err => console.error('Background learning error:', err))
 
     } catch (err) {
       const errorMsg = 'Sorry, something went wrong. Please try again.'
       setMessages(prev => [...prev, { role: 'assistant', content: errorMsg }])
-      setStreamingContent('')
 
       await supabase.from('chat_messages').insert({
         session_id: activeSessionId,
@@ -250,10 +208,11 @@ export default function ChatPanel() {
     }
   }
 
-  const isEmpty = messages.length === 0 && !streamingContent
+  const isEmpty = messages.length === 0
 
   return (
     <div className="flex flex-1 h-screen overflow-hidden min-w-0">
+      {/* Middle Sidebar (Chat Threads list) */}
       <div className="w-56 flex-shrink-0 bg-[#0b0e14] border-r border-white/5 flex flex-col h-full">
         <div className="p-3 border-b border-white/5 flex items-center justify-between">
           <span className="text-xs font-semibold text-gray-400">Conversations</span>
@@ -289,6 +248,7 @@ export default function ChatPanel() {
         </div>
       </div>
 
+      {/* Main Chat Panel */}
       <div className="flex flex-col h-full flex-1 bg-[#0f1219] min-w-0">
         <header className="flex items-center justify-between px-6 py-3.5 border-b border-white/8 flex-shrink-0">
           <div className="flex items-center gap-3">
@@ -301,6 +261,7 @@ export default function ChatPanel() {
           </div>
         </header>
 
+        {/* Messages */}
         <div className="flex-1 overflow-y-auto">
           {isEmpty ? (
             <div className="flex flex-col items-center justify-center h-full gap-6 px-8 pb-20">
@@ -347,20 +308,8 @@ export default function ChatPanel() {
                 </div>
               ))}
 
-              {streamingContent && (
-                <div className="flex gap-3 justify-start">
-                  <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-blue-500 to-blue-700 flex items-center justify-center flex-shrink-0 mt-0.5 shadow-md shadow-blue-900/30">
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
-                    </svg>
-                  </div>
-                  <div className="flex-1">
-                    <MarkdownRenderer content={streamingContent} isStreaming />
-                  </div>
-                </div>
-              )}
-
-              {loading && !streamingContent && (
+              {/* Thinking indicator */}
+              {loading && (
                 <div className="flex gap-3 items-center">
                   <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-blue-500 to-blue-700 flex items-center justify-center flex-shrink-0 shadow-md shadow-blue-900/30">
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
@@ -380,6 +329,7 @@ export default function ChatPanel() {
           )}
         </div>
 
+        {/* Input bar */}
         <div className="flex-shrink-0 px-6 py-4 border-t border-white/8">
           <div className="max-w-3xl mx-auto">
             <div className={`flex items-end gap-3 bg-white/5 border rounded-2xl px-4 py-3 transition-colors
