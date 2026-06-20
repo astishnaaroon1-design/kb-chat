@@ -5,13 +5,13 @@ import { embedText } from '@/lib/gemini'
 export const runtime = 'nodejs'
 export const maxDuration = 60
 
+// 2026-Compliant Free Models List on OpenRouter
 const FREE_MODELS = [
-  'google/gemini-2.5-flash:free',
-  'meta-llama/llama-3.3-70b-instruct:free',
-  'deepseek/deepseek-chat:free',
-  'qwen/qwen-2.5-72b-instruct:free',
-  'microsoft/phi-3-medium-128k-instruct:free',
-  'openchat/openchat-7b:free'
+  'openrouter/free',                         // 1. Evergreen Free Router (dynamically picks available models)
+  'deepseek/deepseek-v4-flash:free',         // 2. High-speed mixture-of-experts
+  'google/gemma-4-31b-it:free',              // 3. Google's Gemma 4 free model
+  'meta-llama/llama-3.3-70b-instruct:free',  // 4. Llama 3.3 70B multilingual free model
+  'openai/gpt-oss-120b:free'                 // 5. OpenAI gpt-oss-120b free model
 ]
 
 export async function POST(req: NextRequest) {
@@ -19,8 +19,10 @@ export async function POST(req: NextRequest) {
     const { messages, question } = await req.json()
     if (!question) return new Response(JSON.stringify({ error: 'question required' }), { status: 400 })
 
+    // 1. Generate embedding coordinates using Gemini
     const queryEmbedding = await embedText(question)
 
+    // 2. Perform Hybrid Search on uploaded documents (chunks)
     const { data: relevantChunks, error: searchError } = await supabaseAdmin.rpc('match_chunks_hybrid', {
       query_embedding: queryEmbedding,
       query_text: question,
@@ -30,22 +32,26 @@ export async function POST(req: NextRequest) {
     })
     if (searchError) throw searchError
 
+    // 3. Search your AI's learned memories
     const { data: relevantMemories, error: memoryError } = await supabaseAdmin.rpc('match_memories', {
       query_embedding: queryEmbedding,
       match_count: 3,
     })
     if (memoryError) console.error('Memory retrieval error:', memoryError)
 
+    // 4. Assemble document context
     let context = ''
     if (relevantChunks && relevantChunks.length > 0) {
       context = relevantChunks.map((c: any, i: number) => `[Document Source ${i + 1}]\n${c.content}`).join('\n\n---\n\n')
     }
 
+    // 5. Assemble learned memories context
     let memoriesContext = ''
     if (relevantMemories && relevantMemories.length > 0) {
       memoriesContext = relevantMemories.map((m: any, i: number) => `- ${m.content}`).join('\n')
     }
 
+    // 6. Blend them both into the AI system prompt
     let systemPrompt = `You are a helpful AI assistant. Answer the user's question based on your uploaded documents and your long-term learned memories.`
     
     if (context) {
@@ -60,6 +66,7 @@ export async function POST(req: NextRequest) {
 
     systemPrompt += `\n\nFormat your responses using Markdown — use code blocks for code, headers for structure, bullet points for lists.`
 
+    // 7. Format the chat history for OpenRouter
     let historyMessages = messages || []
     if (historyMessages.length > 0 && historyMessages[historyMessages.length - 1].role === 'user') {
       historyMessages = historyMessages.slice(0, -1)
@@ -84,6 +91,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // Ensure history starts with user and alternates cleanly
     while (formattedHistory.length > 0 && formattedHistory[0].role !== 'user') {
       formattedHistory.shift()
     }
@@ -97,6 +105,7 @@ export async function POST(req: NextRequest) {
       { role: 'user', content: question }
     ]
 
+    // 8. Try each free model on OpenRouter until one succeeds
     let activeStream: Response | null = null
     let workingModel = ''
 
@@ -134,6 +143,7 @@ export async function POST(req: NextRequest) {
       throw new Error('All free AI models on OpenRouter are currently busy or unavailable. Please try again in a few moments.')
     }
 
+    // 9. Translate OpenRouter's stream format into your browser's expected format
     const reader = activeStream.body!.getReader()
     const decoder = new TextDecoder()
     const encoder = new TextEncoder()
