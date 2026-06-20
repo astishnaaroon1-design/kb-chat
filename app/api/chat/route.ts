@@ -7,13 +7,11 @@ export const maxDuration = 60
 
 // 2026-Compliant Free Models List on OpenRouter
 const FREE_MODELS = [
-  'openrouter/free',                         // 1. Evergreen Free Router (dynamically picks available models)
-  'deepseek/deepseek-v4-flash:free',         // 2. High-speed mixture-of-experts
-  'google/gemma-4-31b-it:free',              // 3. Google's Gemma 4 free model
-  'meta-llama/llama-3.3-70b-instruct:free',  // 4. Llama 3.3 70B multilingual free model
-  'openai/gpt-oss-120b:free'                 // 5. OpenAI gpt-oss-120b free model
+  'meta-llama/llama-3.3-70b-instruct:free',  // High-performance coding model
+  'deepseek/deepseek-v4-flash:free',         // Fast, logical developer model
+  'openrouter/free',                         // Evergreen backup router
+  // ...
 ]
-
 export async function POST(req: NextRequest) {
   try {
     const { messages, question } = await req.json()
