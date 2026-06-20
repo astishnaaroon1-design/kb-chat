@@ -2,15 +2,22 @@ import { NextRequest } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
 import { embedText } from '@/lib/gemini'
 
+// We remain on Vercel's Edge Runtime to prevent any 10-second timeouts
 export const runtime = 'edge'
 
-// 2026-Compliant Free Models List on OpenRouter
-const FREE_MODELS = [
-  'meta-llama/llama-3.3-70b-instruct:free',  // 1. High-performance logic and coding model
-  'deepseek/deepseek-v4-flash:free',         // 2. High-speed mixture-of-experts
-  'openrouter/free',                         // 3. Evergreen Free Router backup
-  'google/gemma-4-31b-it:free',              // 4. Google's Gemma 4 free model
-  'openai/gpt-oss-120b:free'                 // 5. OpenAI gpt-oss-120b free model
+// The master multi-provider fallback chain
+const MODELS_CHAIN = [
+  // Tier 1: Highest Priority - GitHub PAT Models
+  { name: 'meta/llama-3.3-70b-instruct', provider: 'github' },
+  { name: 'openai/gpt-4o', provider: 'github' },
+  { name: 'openai/gpt-4o-mini', provider: 'github' },
+
+  // Tier 2: Medium Priority - Elite Coding Models on OpenRouter
+  { name: 'meta-llama/llama-3.3-70b-instruct:free', provider: 'openrouter' },
+  { name: 'deepseek/deepseek-v4-flash:free', provider: 'openrouter' },
+
+  // Tier 3: Lowest Priority - OpenRouter Evergreen Free Router Backup
+  { name: 'openrouter/free', provider: 'openrouter' }
 ]
 
 export async function POST(req: NextRequest) {
@@ -21,7 +28,7 @@ export async function POST(req: NextRequest) {
     // 1. Generate embedding coordinates using Gemini
     const queryEmbedding = await embedText(question)
 
-    // 2. Perform Hybrid Search on uploaded documents
+    // 2. Perform Hybrid Search on uploaded documents (chunks)
     const { data: relevantChunks, error: searchError } = await supabaseAdmin.rpc('match_chunks_hybrid', {
       query_embedding: queryEmbedding,
       query_text: question,
@@ -50,29 +57,21 @@ export async function POST(req: NextRequest) {
       memoriesContext = relevantMemories.map((m: any, i: number) => `- ${m.content}`).join('\n')
     }
 
-    // 6. Highly Critical System Instructions (Dual-Brain Logic)
-    let systemPrompt = `You are "Suite Copilot", an elite quantitative software architect, highly critical systems engineer, and world-class programming mentor.
+    // 6. Blend them into the AI system prompt (Senior Developer Persona)
+    let systemPrompt = `You are "Suite Copilot", an expert quantitative software architect, elite programmer, and computer science mentor. Answer the user's question directly and comprehensively.
     
-    You analyze coding, logic, and system architectural problems with absolute rigor, checking for hidden assumptions, race conditions, file/folder casing mismatches, and timing constraints.
-
-    COGNITIVE MODALITY RULES:
+    CRITICAL REQUIREMENT: Before writing your actual answer, you MUST write down your step-by-step thinking process, analysis, and retrieval planning inside a <thinking>...</thinking> block.
+    Keep your <thinking> block highly concise and brief (under 3-4 sentences) so that you get straight to writing your code and avoid lag.
+    Once you close the </thinking> block, write your final response using your uploaded documents and memories.
     
-    RULE A: If the user input is a simple greeting, check-in, or casual conversation (e.g., "hi", "hello", "hy", "how's it going"):
-    - Keep your thoughts inside the <thinking>...</thinking> block extremely short (exactly one short sentence of analysis).
-    - Close the </thinking> block immediately and reply with a brief, polite response. No detailed thinking is permitted for simple questions.
-
-    RULE B: If the user input is a technical request, coding task, database query, configuration error, or system optimization problem:
-    - You must think deeply and critically inside your <thinking>...</thinking> block before answering.
-    - Your thoughts must systematically review:
-      1. Potential hidden bugs or silent runtime crashes in the user's technology choices.
-      2. Environment variable mismatches, key definitions, or loading states.
-      3. Folder/file casing issues (lowercase vs uppercase directory mismatches on Unix servers).
-      4. Database structure constraints, index types (IVFFlat vs HNSW sizes), and RLS permissions.
-    - Write complete, robust, and commented code blocks without placeholders or shorthand.
-
-    CRITICAL FORMAT REQUIREMENT:
-    You must always start your response with a <thinking>...</thinking> block.
-    Once you write the closing </thinking> tag, output your conversational markdown response immediately afterward.`
+    Example output structure:
+    <thinking>
+    I am analyzing the user's coding request... I will retrieve the preferred libraries...
+    </thinking>
+    Here is the complete, commented TypeScript code:
+    \`\`\`typescript
+    // code here
+    \`\`\``
     
     if (context) {
       systemPrompt += `\n\nUploaded Knowledge Base Content:\n${context}`
@@ -111,6 +110,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // Ensure history starts with user and alternates cleanly
     while (formattedHistory.length > 0 && formattedHistory[0].role !== 'user') {
       formattedHistory.shift()
     }
@@ -124,54 +124,86 @@ export async function POST(req: NextRequest) {
       { role: 'user', content: question }
     ]
 
-    // 8. Try each free model on OpenRouter until one succeeds
+    // 8. Iterate through our multi-provider fallback list until one succeeds
     let activeStream: Response | null = null
     let workingModel = ''
+    let workingProvider = ''
 
-    for (const modelName of FREE_MODELS) {
+    for (const modelItem of MODELS_CHAIN) {
+      const { name: modelName, provider } = modelItem
+
       try {
-        const openRouterRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        let endpoint = ''
+        let authHeader = ''
+        let payloadBody: any = {
+          model: modelName,
+          messages: payloadMessages,
+          stream: true
+        }
+
+        if (provider === 'github') {
+          // Skip if GitHub token is not configured on Vercel
+          if (!process.env.GITHUB_TOKEN) {
+            console.warn(`Skipping model ${modelName}: GITHUB_TOKEN is not configured on Vercel.`)
+            continue
+          }
+          endpoint = 'https://models.github.ai/inference/chat/completions'
+          authHeader = `Bearer ${process.env.GITHUB_TOKEN}`
+        } else {
+          // Skip if OpenRouter key is not configured on Vercel
+          if (!process.env.OPENROUTER_API_KEY) {
+            console.warn(`Skipping model ${modelName}: OPENROUTER_API_KEY is not configured on Vercel.`)
+            continue
+          }
+          endpoint = 'https://openrouter.ai/api/v1/chat/completions'
+          authHeader = `Bearer ${process.env.OPENROUTER_API_KEY}`
+          payloadBody.temperature = 0.2 // OpenRouter optimization
+        }
+
+        console.log(`Connecting to ${provider} model: ${modelName}...`)
+        const res = await fetch(endpoint, {
           method: 'POST',
           headers: {
-            'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
+            'Authorization': authHeader,
             'Content-Type': 'application/json',
-            'HTTP-Referer': 'https://vercel.app',
-            'X-Title': 'KB Chat',
+            ...(provider === 'openrouter' && {
+              'HTTP-Referer': 'https://vercel.app',
+              'X-Title': 'KB Chat'
+            })
           },
-          body: JSON.stringify({
-            model: modelName,
-            messages: payloadMessages,
-            stream: true
-          })
+          body: JSON.stringify(payloadBody)
         })
 
-        if (openRouterRes.ok) {
-          const contentType = openRouterRes.headers.get('content-type') || ''
+        if (res.ok) {
+          const contentType = res.headers.get('content-type') || ''
           
+          // Detect flat JSON error payloads returned as 200 OK
           if (contentType.includes('application/json')) {
-            const json = await openRouterRes.json()
-            const errMsg = json.error?.message || json.message || 'JSON error returned instead of stream'
-            console.warn(`Model ${modelName} returned flat JSON error:`, errMsg)
-            continue 
+            const json = await res.json()
+            const errMsg = json.error?.message || json.message || 'JSON error response instead of stream'
+            console.warn(`Model ${modelName} (${provider}) returned flat JSON error:`, errMsg)
+            continue // Skip and try the next fallback!
           }
 
-          activeStream = openRouterRes
+          activeStream = res
           workingModel = modelName
-          break
+          workingProvider = provider
+          console.log(`Success! Active model chosen: ${modelName} via ${provider}`)
+          break // Found a working model, break the loop!
         } else {
-          const errText = await openRouterRes.text()
-          console.warn(`Model ${modelName} returned status ${openRouterRes.status}:`, errText)
+          const errText = await res.text()
+          console.warn(`Model ${modelName} (${provider}) returned status ${res.status}:`, errText)
         }
       } catch (err) {
-        console.error(`Connection failed for model ${modelName}:`, err)
+        console.error(`Connection failed for ${provider} model ${modelName}:`, err)
       }
     }
 
     if (!activeStream) {
-      throw new Error('All free AI models on OpenRouter are currently busy or unavailable.')
+      throw new Error('All available models on GitHub and OpenRouter are currently busy or unavailable.')
     }
 
-    // 9. Translate OpenRouter stream
+    // 9. Translate standard stream format into browser's expected format
     const reader = activeStream.body!.getReader()
     const decoder = new TextDecoder()
     const encoder = new TextEncoder()
@@ -198,7 +230,7 @@ export async function POST(req: NextRequest) {
                   
                   if (parsed.error) {
                     const errMsg = parsed.error.message || 'Stream error occurred'
-                    controller.enqueue(encoder.encode(`data: ${JSON.stringify({ text: `\n\n[OpenRouter Stream Error: ${errMsg}]\n\n` })}\n\n`))
+                    controller.enqueue(encoder.encode(`data: ${JSON.stringify({ text: `\n\n[${workingProvider.toUpperCase()} Stream Error: ${errMsg}]\n\n` })}\n\n`))
                     break
                   }
 
