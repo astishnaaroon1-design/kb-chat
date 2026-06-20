@@ -19,10 +19,10 @@ export async function POST(req: NextRequest) {
     const { messages, question } = await req.json()
     if (!question) return new Response(JSON.stringify({ error: 'question required' }), { status: 400 })
 
-    // 1. Generate embedding coordinates using Gemini
+    console.log("1. Generating embedding for question:", question)
     const queryEmbedding = await embedText(question)
 
-    // 2. Perform Hybrid Search on uploaded documents (chunks)
+    console.log("2. Performing hybrid search...")
     const { data: relevantChunks, error: searchError } = await supabaseAdmin.rpc('match_chunks_hybrid', {
       query_embedding: queryEmbedding,
       query_text: question,
@@ -32,26 +32,25 @@ export async function POST(req: NextRequest) {
     })
     if (searchError) throw searchError
 
-    // 3. Search your AI's learned memories
+    console.log("3. Searching learned memories...")
     const { data: relevantMemories, error: memoryError } = await supabaseAdmin.rpc('match_memories', {
       query_embedding: queryEmbedding,
       match_count: 3,
     })
     if (memoryError) console.error('Memory retrieval error:', memoryError)
 
-    // 4. Assemble document context
+    // Assemble document context
     let context = ''
     if (relevantChunks && relevantChunks.length > 0) {
       context = relevantChunks.map((c: any, i: number) => `[Document Source ${i + 1}]\n${c.content}`).join('\n\n---\n\n')
     }
 
-    // 5. Assemble learned memories context
+    // Assemble learned memories context
     let memoriesContext = ''
     if (relevantMemories && relevantMemories.length > 0) {
       memoriesContext = relevantMemories.map((m: any, i: number) => `- ${m.content}`).join('\n')
     }
 
-    // 6. Blend them both into the AI system prompt
     let systemPrompt = `You are a helpful AI assistant. Answer the user's question based on your uploaded documents and your long-term learned memories.`
     
     if (context) {
@@ -66,7 +65,7 @@ export async function POST(req: NextRequest) {
 
     systemPrompt += `\n\nFormat your responses using Markdown — use code blocks for code, headers for structure, bullet points for lists.`
 
-    // 7. Format the chat history for OpenRouter
+    // Format chat history
     let historyMessages = messages || []
     if (historyMessages.length > 0 && historyMessages[historyMessages.length - 1].role === 'user') {
       historyMessages = historyMessages.slice(0, -1)
@@ -91,7 +90,6 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Ensure history starts with user and alternates cleanly
     while (formattedHistory.length > 0 && formattedHistory[0].role !== 'user') {
       formattedHistory.shift()
     }
@@ -105,12 +103,13 @@ export async function POST(req: NextRequest) {
       { role: 'user', content: question }
     ]
 
-    // 8. Try each free model on OpenRouter until one succeeds
+    console.log("4. Attempting to connect to OpenRouter free models...")
     let activeStream: Response | null = null
     let workingModel = ''
 
     for (const modelName of FREE_MODELS) {
       try {
+        console.log(`Connecting to: ${modelName}...`)
         const openRouterRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
           method: 'POST',
           headers: {
@@ -127,18 +126,9 @@ export async function POST(req: NextRequest) {
         })
 
         if (openRouterRes.ok) {
-          const contentType = openRouterRes.headers.get('content-type') || ''
-          
-          // IF OpenRouter returned a flat JSON instead of a stream, read the error and skip to the next model
-          if (contentType.includes('application/json')) {
-            const json = await openRouterRes.json()
-            const errMsg = json.error?.message || json.message || 'JSON error returned instead of stream'
-            console.warn(`Model ${modelName} returned flat JSON error:`, errMsg)
-            continue // Try the next free model in the list!
-          }
-
           activeStream = openRouterRes
           workingModel = modelName
+          console.log(`Success! Active model chosen: ${modelName}`)
           break
         } else {
           const errText = await openRouterRes.text()
@@ -153,7 +143,7 @@ export async function POST(req: NextRequest) {
       throw new Error('All free AI models on OpenRouter are currently busy or unavailable. Please try again in a few moments.')
     }
 
-    // 9. Translate OpenRouter's stream format into your browser's expected format
+    // Translate OpenRouter stream
     const reader = activeStream.body!.getReader()
     const decoder = new TextDecoder()
     const encoder = new TextEncoder()
@@ -164,7 +154,10 @@ export async function POST(req: NextRequest) {
           let buffer = ''
           while (true) {
             const { done, value } = await reader.read()
-            if (done) break
+            if (done) {
+              console.log("Stream completely read from OpenRouter.")
+              break
+            }
 
             buffer += decoder.decode(value, { stream: true })
             const lines = buffer.split('\n')
@@ -174,28 +167,36 @@ export async function POST(req: NextRequest) {
               const trimmedLine = line.trim()
               if (trimmedLine.startsWith('data: ')) {
                 const data = trimmedLine.slice(6).trim()
-                if (data === '[DONE]') break
+                if (data === '[DONE]') {
+                  console.log("Stream complete marker received.")
+                  break
+                }
                 try {
                   const parsed = JSON.parse(data)
+                  console.log("Raw OpenRouter chunk parsed:", JSON.stringify(parsed))
                   
-                  // If OpenRouter streams an error block inside the 200 stream, catch it and show it to the user
                   if (parsed.error) {
                     const errMsg = parsed.error.message || 'Stream error occurred'
+                    console.error("Parsed an error inside stream:", errMsg)
                     controller.enqueue(encoder.encode(`data: ${JSON.stringify({ text: `\n\n[OpenRouter Stream Error: ${errMsg}]\n\n` })}\n\n`))
                     break
                   }
 
                   const text = parsed.choices?.[0]?.delta?.content
                   if (text) {
+                    console.log(`Streamed text chunk: [${text}]`)
                     controller.enqueue(encoder.encode(`data: ${JSON.stringify({ text })}\n\n`))
                   }
-                } catch (e) {}
+                } catch (e) {
+                  console.error("Failed to parse JSON on line:", trimmedLine, e)
+                }
               }
             }
           }
           controller.enqueue(encoder.encode('data: [DONE]\n\n'))
           controller.close()
         } catch (e) {
+          console.error("Error inside stream reading process:", e)
           controller.error(e)
         }
       }
