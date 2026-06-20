@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
 import { embedText } from '@/lib/gemini'
 
@@ -17,7 +17,7 @@ const FREE_MODELS = [
 export async function POST(req: NextRequest) {
   try {
     const { messages, question } = await req.json()
-    if (!question) return NextResponse.json({ error: 'question required' }, { status: 400 })
+    if (!question) return new Response(JSON.stringify({ error: 'question required' }), { status: 400 })
 
     // 1. Generate embedding coordinates using Gemini (free and high-limit)
     const queryEmbedding = await embedText(question)
@@ -51,8 +51,17 @@ export async function POST(req: NextRequest) {
       memoriesContext = relevantMemories.map((m: any, i: number) => `- ${m.content}`).join('\n')
     }
 
-    // 6. Blend them both into the AI system prompt
-    let systemPrompt = `You are a helpful AI assistant. Answer the user's question based on your uploaded documents and your long-term learned memories.`
+    // 6. Blend them into the system prompt with strict "Thinking" instructions
+    let systemPrompt = `You are a helpful AI assistant. 
+    
+    CRITICAL REQUIREMENT: Before writing your actual answer, you MUST write down your step-by-step thinking process, analysis, and retrieval planning inside a <thinking>...</thinking> block.
+    Once you close the </thinking> block, write your final response using your uploaded documents and memories.
+    
+    Example output structure:
+    <thinking>
+    I am analyzing the user's question... I found matching facts in the memory bank...
+    </thinking>
+    Here is the answer to your question based on my memory...`
     
     if (context) {
       systemPrompt += `\n\nUploaded Knowledge Base Content:\n${context}`
@@ -105,13 +114,12 @@ export async function POST(req: NextRequest) {
       { role: 'user', content: question }
     ]
 
-    // 8. Try each free model on OpenRouter until one succeeds (Non-Streaming!)
-    let responseJson: any = null
+    // 8. Try each free model on OpenRouter until one succeeds
+    let activeStream: Response | null = null
     let workingModel = ''
 
     for (const modelName of FREE_MODELS) {
       try {
-        console.log(`Connecting to: ${modelName}...`)
         const openRouterRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
           method: 'POST',
           headers: {
@@ -123,15 +131,20 @@ export async function POST(req: NextRequest) {
           body: JSON.stringify({
             model: modelName,
             messages: payloadMessages,
-            temperature: 0.2,
-            stream: false // Non-streaming
+            stream: true // Stream is back!
           })
         })
 
         if (openRouterRes.ok) {
-          responseJson = await openRouterRes.json()
+          const contentType = openRouterRes.headers.get('content-type') || ''
+          if (contentType.includes('application/json')) {
+            const json = await openRouterRes.json()
+            console.warn(`Model ${modelName} returned flat JSON error:`, json)
+            continue 
+          }
+
+          activeStream = openRouterRes
           workingModel = modelName
-          console.log(`Success! Active model chosen: ${modelName}`)
           break
         } else {
           const errText = await openRouterRes.text()
@@ -142,17 +155,66 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    if (!responseJson) {
-      throw new Error('All free AI models on OpenRouter are currently busy or unavailable. Please try again in a few moments.')
+    if (!activeStream) {
+      throw new Error('All free AI models on OpenRouter are currently busy or unavailable.')
     }
 
-    // 9. Extract final clean output text
-    const finalCleanOutput = responseJson.choices?.[0]?.message?.content || "I was unable to analyze that request."
+    // 9. Translate OpenRouter stream
+    const reader = activeStream.body!.getReader()
+    const decoder = new TextDecoder()
+    const encoder = new TextEncoder()
 
-    return NextResponse.json({ text: finalCleanOutput })
+    const stream = new ReadableStream({
+      async start(controller) {
+        try {
+          let buffer = ''
+          while (true) {
+            const { done, value } = await reader.read()
+            if (done) break
 
+            buffer += decoder.decode(value, { stream: true })
+            const lines = buffer.split('\n')
+            buffer = lines.pop() || ''
+
+            for (const line of lines) {
+              const trimmedLine = line.trim()
+              if (trimmedLine.startsWith('data: ')) {
+                const data = trimmedLine.slice(6).trim()
+                if (data === '[DONE]') break
+                try {
+                  const parsed = JSON.parse(data)
+                  
+                  if (parsed.error) {
+                    const errMsg = parsed.error.message || 'Stream error occurred'
+                    controller.enqueue(encoder.encode(`data: ${JSON.stringify({ text: `\n\n[OpenRouter Stream Error: ${errMsg}]\n\n` })}\n\n`))
+                    break
+                  }
+
+                  const text = parsed.choices?.[0]?.delta?.content
+                  if (text) {
+                    controller.enqueue(encoder.encode(`data: ${JSON.stringify({ text })}\n\n`))
+                  }
+                } catch (e) {}
+              }
+            }
+          }
+          controller.enqueue(encoder.encode('data: [DONE]\n\n'))
+          controller.close()
+        } catch (e) {
+          controller.error(e)
+        }
+      }
+    })
+
+    return new Response(stream, {
+      headers: {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+      },
+    })
   } catch (err: any) {
     console.error('Chat error:', err)
-    return NextResponse.json({ error: err.message }, { status: 500 })
+    return new Response(JSON.stringify({ error: err.message }), { status: 500 })
   }
 }
