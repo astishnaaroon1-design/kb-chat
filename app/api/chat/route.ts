@@ -1,23 +1,16 @@
-import { NextRequest } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
 import { embedText } from '@/lib/gemini'
 
-// We remain on Vercel's Edge Runtime to prevent any 10-second timeouts
 export const runtime = 'edge'
 
-// The master multi-provider fallback chain
-const MODELS_CHAIN = [
-  // Tier 1: Highest Priority - GitHub PAT Models
-  { name: 'meta/llama-3.3-70b-instruct', provider: 'github' },
-  { name: 'openai/gpt-4o', provider: 'github' },
-  { name: 'openai/gpt-4o-mini', provider: 'github' },
-
-  // Tier 2: Medium Priority - Elite Coding Models on OpenRouter
-  { name: 'meta-llama/llama-3.3-70b-instruct:free', provider: 'openrouter' },
-  { name: 'deepseek/deepseek-v4-flash:free', provider: 'openrouter' },
-
-  // Tier 3: Lowest Priority - OpenRouter Evergreen Free Router Backup
-  { name: 'openrouter/free', provider: 'openrouter' }
+// 2026-Compliant Free Models List on OpenRouter
+const FREE_MODELS = [
+  'meta-llama/llama-3.3-70b-instruct:free',  // 1. High-performance logic and coding model
+  'deepseek/deepseek-v4-flash:free',         // 2. High-speed mixture-of-experts
+  'openrouter/free',                         // 3. Evergreen Free Router backup
+  'google/gemma-4-31b-it:free',              // 4. Google's Gemma 4 free model
+  'openai/gpt-oss-120b:free'                 // 5. OpenAI gpt-oss-120b free model
 ]
 
 export async function POST(req: NextRequest) {
@@ -25,67 +18,67 @@ export async function POST(req: NextRequest) {
     const { messages, question } = await req.json()
     if (!question) return new Response(JSON.stringify({ error: 'question required' }), { status: 400 })
 
-    // 1. Generate embedding coordinates using Gemini
+    const host = req.headers.get('host') || 'localhost:3000'
+    const protocol = host.includes('localhost') ? 'http' : 'https'
+
+    // 1. Fetch our active agent directory so the CEO knows who works in the company
+    const { data: roster } = await supabaseAdmin
+      .from('agent_directory')
+      .select('id, name, role, skills')
+    const rosterText = roster 
+      ? roster.map((r: any) => `- ID: ${r.id}, Role: ${r.role}, Skills: ${r.skills.join(', ')}`).join('\n')
+      : "No employees registered."
+
+    // 2. Fetch our current database backlog so the CEO can check progress
+    const { data: activeTasks } = await supabaseAdmin
+      .from('tasks')
+      .select('*')
+      .order('created_at', { ascending: true })
+
+    const backlogText = activeTasks && activeTasks.length > 0
+      ? activeTasks.map((t: any) => `- [${t.status.toUpperCase()}] ID: ${t.id}, Title: ${t.title}, Assigned to: ${t.assigned_to}, Depends on: ${t.dependency_id || 'None'}`).join('\n')
+      : "The task backlog is currently empty. No active project is running."
+
+    // 3. Generate embedding coordinates using Gemini (for lightweight semantic checks if needed)
     const queryEmbedding = await embedText(question)
 
-    // 2. Perform Hybrid Search on uploaded documents (chunks)
-    const { data: relevantChunks, error: searchError } = await supabaseAdmin.rpc('match_chunks_hybrid', {
-      query_embedding: queryEmbedding,
-      query_text: question,
-      match_count: 5,
-      vector_weight: 0.6,
-      fts_weight: 0.4
-    })
-    if (searchError) throw searchError
+    // 4. Formulate the conversational CEO Prompt
+    let systemPrompt = `You are "Suite Copilot", the AI Chief Executive Officer (CEO) of this workspace. 
+    Your job is to coordinate a team of specialized agents, manage the database task backlog, and communicate naturally with the user.
 
-    // 3. Search your AI's learned memories
-    const { data: relevantMemories, error: memoryError } = await supabaseAdmin.rpc('match_memories', {
-      query_embedding: queryEmbedding,
-      match_count: 3,
-    })
-    if (memoryError) console.error('Memory retrieval error:', memoryError)
+    Active Employee Roster:
+    ${rosterText}
 
-    // 4. Assemble document context
-    let context = ''
-    if (relevantChunks && relevantChunks.length > 0) {
-      context = relevantChunks.map((c: any, i: number) => `[Document Source ${i + 1}]\n${c.content}`).join('\n\n---\n\n')
-    }
+    Current Project Backlog:
+    ${backlogText}
 
-    // 5. Assemble learned memories context
-    let memoriesContext = ''
-    if (relevantMemories && relevantMemories.length > 0) {
-      memoriesContext = relevantMemories.map((m: any, i: number) => `- ${m.content}`).join('\n')
-    }
+    YOUR COGNITIVE RULES:
+    1. If the backlog is empty and the user gives a high-level goal:
+       - Break the goal down into a logical sequence of tasks (e.g. design first, then coding).
+       - Append this tool call at the very end of your response text:
+         [TOOL: create_project [{"id_label": "t1", "title": "Task Title", "description": "Instructions", "assigned_to": "agent_id", "depends_on_label": null}]]
+       - Reply to the user: "I have broken down your goal and assigned the tasks. The team is on its job! 🚀"
 
-    // 6. Blend them into the AI system prompt (Senior Developer Persona)
-    let systemPrompt = `You are "Suite Copilot", an expert quantitative software architect, elite programmer, and computer science mentor. Answer the user's question directly and comprehensively.
-    
-    CRITICAL REQUIREMENT: Before writing your actual answer, you MUST write down your step-by-step thinking process, analysis, and retrieval planning inside a <thinking>...</thinking> block.
-    Keep your <thinking> block highly concise and brief (under 3-4 sentences) so that you get straight to writing your code and avoid lag.
-    Once you close the </thinking> block, write your final response using your uploaded documents and memories.
-    
-    Example output structure:
-    <thinking>
-    I am analyzing the user's coding request... I will retrieve the preferred libraries...
-    </thinking>
-    Here is the complete, commented TypeScript code:
-    \`\`\`typescript
-    // code here
-    \`\`\``
-    
-    if (context) {
-      systemPrompt += `\n\nUploaded Knowledge Base Content:\n${context}`
-    } else {
-      systemPrompt += `\n\nNote: No matching document segments were found in the uploaded knowledge base files.`
-    }
+    2. If the user asks about progress or status (e.g., "how much is done?", "status?"):
+       - Read the Current Project Backlog above.
+       - Provide a warm, natural, and encouraging progress update telling the user exactly what is completed, what is active, and who is working on it.
+       - Do not call any tools.
 
-    if (memoriesContext) {
-      systemPrompt += `\n\nLong-Term Learned Memories (Things you remember learning from past conversations with this user):\n${memoriesContext}`
-    }
+    3. If the user asks to do something new, and there is already an active project running:
+       - Reply naturally asking them to clarify: "Is this a general question, or would you like me to add this as a new task inside our current active project?"
+       - Do not call any tools.
 
-    systemPrompt += `\n\nFormat your responses using Markdown — use code blocks for code, headers for structure, bullet points for lists.`
+    4. If the user replies "inside that project" or confirms they want to add a task to the active project:
+       - Add the task to the backlog.
+       - Append this tool call at the very end of your response text:
+         [TOOL: add_task {"title": "Task Title", "description": "Instructions", "assigned_to": "agent_id"}]
+       - Reply to the user: "Understood! I have added this new task to the current project. The team is on its job! 🚀"
 
-    // 7. Format the chat history
+    5. If the user is just chatting, asking general questions, or discussing design details:
+       - Reply naturally and professionally. Do not call any tools.
+
+    Format your response in clean Markdown. If you call a tool, append the command exactly as shown (e.g. [TOOL: ...]) at the very end of your response text.`
+
     let historyMessages = messages || []
     if (historyMessages.length > 0 && historyMessages[historyMessages.length - 1].role === 'user') {
       historyMessages = historyMessages.slice(0, -1)
@@ -110,7 +103,6 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Ensure history starts with user and alternates cleanly
     while (formattedHistory.length > 0 && formattedHistory[0].role !== 'user') {
       formattedHistory.shift()
     }
@@ -124,86 +116,52 @@ export async function POST(req: NextRequest) {
       { role: 'user', content: question }
     ]
 
-    // 8. Iterate through our multi-provider fallback list until one succeeds
+    // 5. Try each free model on OpenRouter until one succeeds
     let activeStream: Response | null = null
     let workingModel = ''
-    let workingProvider = ''
 
-    for (const modelItem of MODELS_CHAIN) {
-      const { name: modelName, provider } = modelItem
-
+    for (const modelName of FREE_MODELS) {
       try {
-        let endpoint = ''
-        let authHeader = ''
-        let payloadBody: any = {
-          model: modelName,
-          messages: payloadMessages,
-          stream: true
-        }
-
-        if (provider === 'github') {
-          // Skip if GitHub token is not configured on Vercel
-          if (!process.env.GITHUB_TOKEN) {
-            console.warn(`Skipping model ${modelName}: GITHUB_TOKEN is not configured on Vercel.`)
-            continue
-          }
-          endpoint = 'https://models.github.ai/inference/chat/completions'
-          authHeader = `Bearer ${process.env.GITHUB_TOKEN}`
-        } else {
-          // Skip if OpenRouter key is not configured on Vercel
-          if (!process.env.OPENROUTER_API_KEY) {
-            console.warn(`Skipping model ${modelName}: OPENROUTER_API_KEY is not configured on Vercel.`)
-            continue
-          }
-          endpoint = 'https://openrouter.ai/api/v1/chat/completions'
-          authHeader = `Bearer ${process.env.OPENROUTER_API_KEY}`
-          payloadBody.temperature = 0.2 // OpenRouter optimization
-        }
-
-        console.log(`Connecting to ${provider} model: ${modelName}...`)
-        const res = await fetch(endpoint, {
+        const openRouterRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
           method: 'POST',
           headers: {
-            'Authorization': authHeader,
+            'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
             'Content-Type': 'application/json',
-            ...(provider === 'openrouter' && {
-              'HTTP-Referer': 'https://vercel.app',
-              'X-Title': 'KB Chat'
-            })
+            'HTTP-Referer': 'https://vercel.app',
+            'X-Title': 'KB Chat',
           },
-          body: JSON.stringify(payloadBody)
+          body: JSON.stringify({
+            model: modelName,
+            messages: payloadMessages,
+            stream: true
+          })
         })
 
-        if (res.ok) {
-          const contentType = res.headers.get('content-type') || ''
-          
-          // Detect flat JSON error payloads returned as 200 OK
+        if (openRouterRes.ok) {
+          const contentType = openRouterRes.headers.get('content-type') || ''
           if (contentType.includes('application/json')) {
-            const json = await res.json()
-            const errMsg = json.error?.message || json.message || 'JSON error response instead of stream'
-            console.warn(`Model ${modelName} (${provider}) returned flat JSON error:`, errMsg)
-            continue // Skip and try the next fallback!
+            const json = await openRouterRes.json()
+            console.warn(`Model ${modelName} returned flat JSON error:`, json)
+            continue 
           }
 
-          activeStream = res
+          activeStream = openRouterRes
           workingModel = modelName
-          workingProvider = provider
-          console.log(`Success! Active model chosen: ${modelName} via ${provider}`)
-          break // Found a working model, break the loop!
+          break
         } else {
-          const errText = await res.text()
-          console.warn(`Model ${modelName} (${provider}) returned status ${res.status}:`, errText)
+          const errText = await openRouterRes.text()
+          console.warn(`Model ${modelName} returned status ${openRouterRes.status}:`, errText)
         }
       } catch (err) {
-        console.error(`Connection failed for ${provider} model ${modelName}:`, err)
+        console.error(`Connection failed for model ${modelName}:`, err)
       }
     }
 
     if (!activeStream) {
-      throw new Error('All available models on GitHub and OpenRouter are currently busy or unavailable.')
+      throw new Error('All free AI models on OpenRouter are currently busy or unavailable.')
     }
 
-    // 9. Translate standard stream format into browser's expected format
+    // 6. Translate OpenRouter stream and execute background tools
     const reader = activeStream.body!.getReader()
     const decoder = new TextDecoder()
     const encoder = new TextEncoder()
@@ -212,6 +170,8 @@ export async function POST(req: NextRequest) {
       async start(controller) {
         try {
           let buffer = ''
+          let fullContent = ''
+
           while (true) {
             const { done, value } = await reader.read()
             if (done) break
@@ -230,18 +190,95 @@ export async function POST(req: NextRequest) {
                   
                   if (parsed.error) {
                     const errMsg = parsed.error.message || 'Stream error occurred'
-                    controller.enqueue(encoder.encode(`data: ${JSON.stringify({ text: `\n\n[${workingProvider.toUpperCase()} Stream Error: ${errMsg}]\n\n` })}\n\n`))
+                    controller.enqueue(encoder.encode(`data: ${JSON.stringify({ text: `\n\n[OpenRouter Stream Error: ${errMsg}]\n\n` })}\n\n`))
                     break
                   }
 
                   const text = parsed.choices?.[0]?.delta?.content
                   if (text) {
+                    fullContent += text
                     controller.enqueue(encoder.encode(`data: ${JSON.stringify({ text })}\n\n`))
                   }
                 } catch (e) {}
               }
             }
           }
+
+          // 7. Parse and execute the tools directly on the server after streaming completes!
+          let toolMatch = fullContent.match(/\[TOOL:\s*(\w+)(?:\s+({.*?|\[.*?\]))?\]/)
+          if (toolMatch) {
+            const toolName = toolMatch[1]
+            let toolArgs: any = null
+            try {
+              if (toolMatch[2]) toolArgs = JSON.parse(toolMatch[2])
+            } catch (pErr) {
+              console.error('Tool args parse error:', pErr)
+            }
+
+            if (toolName === 'create_project' && Array.isArray(toolArgs)) {
+              console.log('CEO: Creating new project backlog...')
+              const labelToUuidMap: Record<string, string> = {}
+
+              // First Pass: Insert tasks that have no dependencies and generate their database UUIDs
+              for (const t of toolArgs) {
+                const { data: createdTask, error: insertError } = await supabaseAdmin
+                  .from('tasks')
+                  .insert({
+                    title: t.title,
+                    description: t.description,
+                    assigned_to: t.assigned_to,
+                    status: 'pending'
+                  })
+                  .select()
+                  .single()
+
+                if (insertError) throw insertError
+                labelToUuidMap[t.id_label] = createdTask.id
+              }
+
+              // Second Pass: Link the tasks that have dependencies
+              for (const t of toolArgs) {
+                if (t.depends_on_label && labelToUuidMap[t.depends_on_label]) {
+                  const activeTaskId = labelToUuidMap[t.id_label]
+                  const parentTaskUuid = labelToUuidMap[t.depends_on_label]
+
+                  const { error: updateError } = await supabaseAdmin
+                    .from('tasks')
+                    .update({ dependency_id: parentTaskUuid })
+                    .eq('id', activeTaskId)
+
+                  if (updateError) throw updateError
+                }
+              }
+
+              // Trigger Supervisor Agent to start the loop
+              fetch(`${protocol}://${host}/api/agents/supervisor`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+              }).catch(err => console.error('Error triggering supervisor from CEO:', err))
+            }
+
+            if (toolName === 'add_task' && toolArgs) {
+              console.log('CEO: Appending new task to current project backlog...')
+              const { error: insertError } = await supabaseAdmin
+                .from('tasks')
+                .insert({
+                  title: toolArgs.title,
+                  description: toolArgs.description,
+                  assigned_to: toolArgs.assigned_to,
+                  status: 'pending'
+                })
+
+              if (insertError) throw insertError
+
+              // Trigger Supervisor Agent
+              fetch(`${protocol}://${host}/api/agents/supervisor`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+              }).catch(err => console.error('Error triggering supervisor from CEO:', err))
+            }
+          }
+
           controller.enqueue(encoder.encode('data: [DONE]\n\n'))
           controller.close()
         } catch (e) {
@@ -261,4 +298,4 @@ export async function POST(req: NextRequest) {
     console.error('Chat error:', err)
     return new Response(JSON.stringify({ error: err.message }), { status: 500 })
   }
-}
+                        }
