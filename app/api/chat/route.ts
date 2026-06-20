@@ -1,4 +1,4 @@
-import { NextRequest } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
 import { embedText } from '@/lib/gemini'
 
@@ -17,12 +17,12 @@ const FREE_MODELS = [
 export async function POST(req: NextRequest) {
   try {
     const { messages, question } = await req.json()
-    if (!question) return new Response(JSON.stringify({ error: 'question required' }), { status: 400 })
+    if (!question) return NextResponse.json({ error: 'question required' }, { status: 400 })
 
-    console.log("1. Generating embedding for question:", question)
+    // 1. Generate embedding coordinates using Gemini (free and high-limit)
     const queryEmbedding = await embedText(question)
 
-    console.log("2. Performing hybrid search...")
+    // 2. Perform Hybrid Search on uploaded documents (chunks)
     const { data: relevantChunks, error: searchError } = await supabaseAdmin.rpc('match_chunks_hybrid', {
       query_embedding: queryEmbedding,
       query_text: question,
@@ -32,25 +32,26 @@ export async function POST(req: NextRequest) {
     })
     if (searchError) throw searchError
 
-    console.log("3. Searching learned memories...")
+    // 3. Search your AI's learned memories
     const { data: relevantMemories, error: memoryError } = await supabaseAdmin.rpc('match_memories', {
       query_embedding: queryEmbedding,
       match_count: 3,
     })
     if (memoryError) console.error('Memory retrieval error:', memoryError)
 
-    // Assemble document context
+    // 4. Assemble document context
     let context = ''
     if (relevantChunks && relevantChunks.length > 0) {
       context = relevantChunks.map((c: any, i: number) => `[Document Source ${i + 1}]\n${c.content}`).join('\n\n---\n\n')
     }
 
-    // Assemble learned memories context
+    // 5. Assemble learned memories context
     let memoriesContext = ''
     if (relevantMemories && relevantMemories.length > 0) {
       memoriesContext = relevantMemories.map((m: any, i: number) => `- ${m.content}`).join('\n')
     }
 
+    // 6. Blend them both into the AI system prompt
     let systemPrompt = `You are a helpful AI assistant. Answer the user's question based on your uploaded documents and your long-term learned memories.`
     
     if (context) {
@@ -65,7 +66,7 @@ export async function POST(req: NextRequest) {
 
     systemPrompt += `\n\nFormat your responses using Markdown — use code blocks for code, headers for structure, bullet points for lists.`
 
-    // Format chat history
+    // 7. Format the chat history
     let historyMessages = messages || []
     if (historyMessages.length > 0 && historyMessages[historyMessages.length - 1].role === 'user') {
       historyMessages = historyMessages.slice(0, -1)
@@ -90,6 +91,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // Ensure history starts with user and alternates cleanly
     while (formattedHistory.length > 0 && formattedHistory[0].role !== 'user') {
       formattedHistory.shift()
     }
@@ -103,8 +105,8 @@ export async function POST(req: NextRequest) {
       { role: 'user', content: question }
     ]
 
-    console.log("4. Attempting to connect to OpenRouter free models...")
-    let activeStream: Response | null = null
+    // 8. Try each free model on OpenRouter until one succeeds (Non-Streaming!)
+    let responseJson: any = null
     let workingModel = ''
 
     for (const modelName of FREE_MODELS) {
@@ -121,12 +123,13 @@ export async function POST(req: NextRequest) {
           body: JSON.stringify({
             model: modelName,
             messages: payloadMessages,
-            stream: true,
+            temperature: 0.2,
+            stream: false // Non-streaming
           })
         })
 
         if (openRouterRes.ok) {
-          activeStream = openRouterRes
+          responseJson = await openRouterRes.json()
           workingModel = modelName
           console.log(`Success! Active model chosen: ${modelName}`)
           break
@@ -139,78 +142,17 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    if (!activeStream) {
+    if (!responseJson) {
       throw new Error('All free AI models on OpenRouter are currently busy or unavailable. Please try again in a few moments.')
     }
 
-    // Translate OpenRouter stream
-    const reader = activeStream.body!.getReader()
-    const decoder = new TextDecoder()
-    const encoder = new TextEncoder()
+    // 9. Extract final clean output text
+    const finalCleanOutput = responseJson.choices?.[0]?.message?.content || "I was unable to analyze that request."
 
-    const stream = new ReadableStream({
-      async start(controller) {
-        try {
-          let buffer = ''
-          while (true) {
-            const { done, value } = await reader.read()
-            if (done) {
-              console.log("Stream completely read from OpenRouter.")
-              break
-            }
+    return NextResponse.json({ text: finalCleanOutput })
 
-            buffer += decoder.decode(value, { stream: true })
-            const lines = buffer.split('\n')
-            buffer = lines.pop() || ''
-
-            for (const line of lines) {
-              const trimmedLine = line.trim()
-              if (trimmedLine.startsWith('data: ')) {
-                const data = trimmedLine.slice(6).trim()
-                if (data === '[DONE]') {
-                  console.log("Stream complete marker received.")
-                  break
-                }
-                try {
-                  const parsed = JSON.parse(data)
-                  console.log("Raw OpenRouter chunk parsed:", JSON.stringify(parsed))
-                  
-                  if (parsed.error) {
-                    const errMsg = parsed.error.message || 'Stream error occurred'
-                    console.error("Parsed an error inside stream:", errMsg)
-                    controller.enqueue(encoder.encode(`data: ${JSON.stringify({ text: `\n\n[OpenRouter Stream Error: ${errMsg}]\n\n` })}\n\n`))
-                    break
-                  }
-
-                  const text = parsed.choices?.[0]?.delta?.content
-                  if (text) {
-                    console.log(`Streamed text chunk: [${text}]`)
-                    controller.enqueue(encoder.encode(`data: ${JSON.stringify({ text })}\n\n`))
-                  }
-                } catch (e) {
-                  console.error("Failed to parse JSON on line:", trimmedLine, e)
-                }
-              }
-            }
-          }
-          controller.enqueue(encoder.encode('data: [DONE]\n\n'))
-          controller.close()
-        } catch (e) {
-          console.error("Error inside stream reading process:", e)
-          controller.error(e)
-        }
-      }
-    })
-
-    return new Response(stream, {
-      headers: {
-        'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache',
-        'Connection': 'keep-alive',
-      },
-    })
   } catch (err: any) {
     console.error('Chat error:', err)
-    return new Response(JSON.stringify({ error: err.message }), { status: 500 })
+    return NextResponse.json({ error: err.message }, { status: 500 })
   }
 }
