@@ -15,7 +15,7 @@ interface ChatSession {
   created_at: string
 }
 
-// 1. Specialized helper to separate and parse thoughts from the text stream
+// 1. Helper function to parse thoughts from content in real-time
 function parseThinkingAndContent(text: string) {
   const thinkingRegex = /<thinking>([\s\S]*?)(?:<\/thinking>|$)/i
   const match = text.match(thinkingRegex)
@@ -35,7 +35,7 @@ function parseThinkingAndContent(text: string) {
   return { thinking, content, isThinkingComplete }
 }
 
-// 2. Component for rendering a message card with dynamic thoughts extraction
+// 2. UI Component for rendering a message card with dynamic thoughts extraction
 function MessageItem({ msg, isStreaming }: { msg: Message; isStreaming?: boolean }) {
   const [isThinkingExpanded, setIsThinkingExpanded] = useState(true)
   const { thinking, content, isThinkingComplete } = parseThinkingAndContent(msg.content)
@@ -59,7 +59,7 @@ function MessageItem({ msg, isStreaming }: { msg: Message; isStreaming?: boolean
           <>
             {/* If the message contains thoughts, render them inside a custom collapsible box */}
             {thinking && (
-              <div className="border border-white/10 rounded-xl overflow-hidden bg-[#161b22]">
+              <div className="border border-white/10 rounded-xl overflow-hidden bg-[#161b22] mb-3">
                 <button
                   onClick={() => setIsThinkingExpanded(!isThinkingExpanded)}
                   className="w-full px-4 py-2.5 flex items-center justify-between text-xs text-gray-400 hover:text-white bg-[#1b212c] transition-colors"
@@ -118,6 +118,7 @@ export default function ChatPanel() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, streamingContent])
 
+  // Fetch chat sessions on load
   useEffect(() => {
     const fetchSessions = async () => {
       try {
@@ -142,6 +143,7 @@ export default function ChatPanel() {
     fetchSessions()
   }, [])
 
+  // Load messages when active session changes
   useEffect(() => {
     if (!activeSessionId) return
 
@@ -229,6 +231,7 @@ export default function ChatPanel() {
     if (textareaRef.current) textareaRef.current.style.height = 'auto'
 
     try {
+      // 1. Save user message to database
       await supabase.from('chat_messages').insert({
         session_id: activeSessionId,
         role: 'user',
@@ -246,6 +249,7 @@ export default function ChatPanel() {
         setSessions(prev => prev.map(s => s.id === activeSessionId ? { ...s, title: shortenedTitle } : s))
       }
 
+      // 2. Fetch answer from API (Streaming)
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -305,12 +309,14 @@ export default function ChatPanel() {
       setMessages(prev => [...prev, { role: 'assistant', content: fullContent }])
       setStreamingContent('')
 
+      // 3. Save AI response to database
       await supabase.from('chat_messages').insert({
         session_id: activeSessionId,
         role: 'assistant',
         content: fullContent,
       })
 
+      // 4. Trigger Self-Learning
       fetch('/api/learn', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -343,6 +349,7 @@ export default function ChatPanel() {
 
   return (
     <div className="flex flex-1 h-screen overflow-hidden min-w-0">
+      {/* Middle Sidebar (Conversations) */}
       <div className="w-56 flex-shrink-0 bg-[#0b0e14] border-r border-white/5 flex flex-col h-full">
         <div className="p-3 border-b border-white/5 flex items-center justify-between">
           <span className="text-xs font-semibold text-gray-400">Conversations</span>
@@ -378,6 +385,7 @@ export default function ChatPanel() {
         </div>
       </div>
 
+      {/* Main Chat Panel */}
       <div className="flex flex-col h-full flex-1 bg-[#0f1219] min-w-0">
         <header className="flex items-center justify-between px-6 py-3.5 border-b border-white/8 flex-shrink-0">
           <div className="flex items-center gap-3">
@@ -390,6 +398,7 @@ export default function ChatPanel() {
           </div>
         </header>
 
+        {/* Messages */}
         <div className="flex-1 overflow-y-auto">
           {isEmpty ? (
             <div className="flex flex-col items-center justify-center h-full gap-6 px-8 pb-20">
@@ -407,10 +416,12 @@ export default function ChatPanel() {
             </div>
           ) : (
             <div className="max-w-3xl mx-auto px-6 py-6 space-y-8">
+              {/* WE REPLACED the old raw map loop with our beautiful, parsing MessageItem component */}
               {messages.map((msg, i) => (
                 <MessageItem key={i} msg={msg} />
               ))}
 
+              {/* WE ALSO REPLACED the raw streaming block with our MessageItem component */}
               {streamingContent && (
                 <MessageItem msg={{ role: 'assistant', content: streamingContent }} isStreaming />
               )}
@@ -425,7 +436,7 @@ export default function ChatPanel() {
                   </div>
                   <div className="flex-1 pt-3.5">
                     <div className="relative w-full h-1 bg-white/5 rounded-full overflow-hidden">
-                      <div className="absolute top-0 left-0 h-full w-1/3 rounded-full bg-gradient-to-r from-blue-600 via-purple-500 to-pink-500 animate-shimmer" 
+                      <div className="absolute top-0 left-0 h-full w-1/3 rounded-full bg-gradient-to-r from-blue-600 via-purple-500 to-pink-500" 
                            style={{ animation: 'shimmer-slide 1.5s infinite linear' }} />
                     </div>
                   </div>
@@ -444,6 +455,7 @@ export default function ChatPanel() {
           }
         `}</style>
 
+        {/* Input bar */}
         <div className="flex-shrink-0 px-6 py-4 border-t border-white/8">
           <div className="max-w-3xl mx-auto">
             <div className={`flex items-end gap-3 bg-white/5 border rounded-2xl px-4 py-3 transition-colors
