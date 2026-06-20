@@ -4,12 +4,15 @@ import { embedText } from '@/lib/gemini'
 
 export const runtime = 'nodejs'
 
-const FREE_MODELS = [
-  'openrouter/free',
-  'deepseek/deepseek-v4-flash:free',
-  'google/gemma-4-31b-it:free',
-  'meta-llama/llama-3.3-70b-instruct:free',
-  'openai/gpt-oss-120b:free'
+const MODELS_CHAIN = [
+  // Tier 1: Highest Priority - GitHub PAT Models
+  { name: 'meta/llama-3.3-70b-instruct', provider: 'github' },
+  { name: 'openai/gpt-4o', provider: 'github' },
+  { name: 'openai/gpt-4o-mini', provider: 'github' },
+
+  // Tier 2: Medium Priority - Elite Coding Models on OpenRouter
+  { name: 'meta-llama/llama-3.3-70b-instruct:free', provider: 'openrouter' },
+  { name: 'deepseek/deepseek-v4-flash:free', provider: 'openrouter' }
 ]
 
 export async function POST(req: NextRequest) {
@@ -37,19 +40,33 @@ export async function POST(req: NextRequest) {
     let responseText = ''
     let success = false
 
-    for (const modelName of FREE_MODELS) {
+    for (const modelItem of MODELS_CHAIN) {
+      const { name: modelName, provider } = modelItem
+
       try {
-        const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        let endpoint = ''
+        let authHeader = ''
+
+        if (provider === 'github') {
+          if (!process.env.GITHUB_TOKEN) continue
+          endpoint = 'https://models.github.ai/inference/chat/completions'
+          authHeader = `Bearer ${process.env.GITHUB_TOKEN}`
+        } else {
+          if (!process.env.OPENROUTER_API_KEY) continue
+          endpoint = 'https://openrouter.ai/api/v1/chat/completions'
+          authHeader = `Bearer ${process.env.OPENROUTER_API_KEY}`
+        }
+
+        const res = await fetch(endpoint, {
           method: 'POST',
           headers: {
-            'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
-            'Content-Type': 'application/json',
-            'HTTP-Referer': 'https://vercel.app',
-            'X-Title': 'KB Chat',
+            'Authorization': authHeader,
+            'Content-Type': 'application/json'
           },
           body: JSON.stringify({
             model: modelName,
             messages: [{ role: 'user', content: memoryPrompt }],
+            stream: false
           })
         })
 
@@ -60,7 +77,7 @@ export async function POST(req: NextRequest) {
           break
         }
       } catch (err) {
-        console.error(`Learn error for model ${modelName}:`, err)
+        console.error(`Learn error for ${provider} model ${modelName}:`, err)
       }
     }
 
@@ -90,4 +107,4 @@ export async function POST(req: NextRequest) {
     console.error('Learning error:', err)
     return NextResponse.json({ error: err.message }, { status: 500 })
   }
-}
+                                 }
