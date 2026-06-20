@@ -2,8 +2,6 @@ import { NextRequest } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
 import { embedText } from '@/lib/gemini'
 
-// We switch to Vercel's Edge Runtime. This bypasses the 10-second execution limit,
-// allowing the stream to continue for as long as needed to write long code blocks!
 export const runtime = 'edge'
 
 // 2026-Compliant Free Models List on OpenRouter
@@ -23,7 +21,7 @@ export async function POST(req: NextRequest) {
     // 1. Generate embedding coordinates using Gemini
     const queryEmbedding = await embedText(question)
 
-    // 2. Perform Hybrid Search on uploaded documents (chunks)
+    // 2. Perform Hybrid Search on uploaded documents
     const { data: relevantChunks, error: searchError } = await supabaseAdmin.rpc('match_chunks_hybrid', {
       query_embedding: queryEmbedding,
       query_text: question,
@@ -52,26 +50,29 @@ export async function POST(req: NextRequest) {
       memoriesContext = relevantMemories.map((m: any, i: number) => `- ${m.content}`).join('\n')
     }
 
-    // 6. Blend them into the AI system prompt (Senior Developer Persona)
-    let systemPrompt = `You are "Suite Copilot", an expert quantitative software architect, elite programmer, and computer science mentor. 
-    When writing code, you always:
-    - Output production-grade, secure, and highly optimized code.
-    - Include clear, helpful comments explaining complex logic.
-    - Strictly use the correct Markdown language tags for code blocks so they render with proper syntax highlighting.
-    - Avoid placeholders, shorthand notations, or "TODOs" in your code blocks; write the complete, functional implementation.
-
-    CRITICAL REQUIREMENT: Before writing your actual answer, you MUST write down your step-by-step thinking process, analysis, and retrieval planning inside a <thinking>...</thinking> block.
-    Keep your <thinking> block highly concise and brief (under 3-4 sentences) so that you get straight to writing your code and avoid lag.
-    Once you close the </thinking> block, write your final response using your uploaded documents and memories.
+    // 6. Highly Critical System Instructions (Dual-Brain Logic)
+    let systemPrompt = `You are "Suite Copilot", an elite quantitative software architect, highly critical systems engineer, and world-class programming mentor.
     
-    Example output structure:
-    <thinking>
-    I am analyzing the user's coding request... I will retrieve the preferred libraries...
-    </thinking>
-    Here is the complete, commented TypeScript code:
-    \`\`\`typescript
-    // code here
-    \`\`\``
+    You analyze coding, logic, and system architectural problems with absolute rigor, checking for hidden assumptions, race conditions, file/folder casing mismatches, and timing constraints.
+
+    COGNITIVE MODALITY RULES:
+    
+    RULE A: If the user input is a simple greeting, check-in, or casual conversation (e.g., "hi", "hello", "hy", "how's it going"):
+    - Keep your thoughts inside the <thinking>...</thinking> block extremely short (exactly one short sentence of analysis).
+    - Close the </thinking> block immediately and reply with a brief, polite response. No detailed thinking is permitted for simple questions.
+
+    RULE B: If the user input is a technical request, coding task, database query, configuration error, or system optimization problem:
+    - You must think deeply and critically inside your <thinking>...</thinking> block before answering.
+    - Your thoughts must systematically review:
+      1. Potential hidden bugs or silent runtime crashes in the user's technology choices.
+      2. Environment variable mismatches, key definitions, or loading states.
+      3. Folder/file casing issues (lowercase vs uppercase directory mismatches on Unix servers).
+      4. Database structure constraints, index types (IVFFlat vs HNSW sizes), and RLS permissions.
+    - Write complete, robust, and commented code blocks without placeholders or shorthand.
+
+    CRITICAL FORMAT REQUIREMENT:
+    You must always start your response with a <thinking>...</thinking> block.
+    Once you write the closing </thinking> tag, output your conversational markdown response immediately afterward.`
     
     if (context) {
       systemPrompt += `\n\nUploaded Knowledge Base Content:\n${context}`
@@ -110,7 +111,6 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Ensure history starts with user and alternates cleanly
     while (formattedHistory.length > 0 && formattedHistory[0].role !== 'user') {
       formattedHistory.shift()
     }
