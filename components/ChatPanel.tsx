@@ -15,95 +15,6 @@ interface ChatSession {
   created_at: string
 }
 
-// 1. Helper function to parse thoughts from content in real-time
-function parseThinkingAndContent(text: string) {
-  const thinkingRegex = /<thinking>([\s\S]*?)(?:<\/thinking>|$)/i
-  const match = text.match(thinkingRegex)
-  
-  let thinking = ""
-  let content = text
-  let isThinkingComplete = false
-
-  if (match) {
-    thinking = match[1]
-    content = text.replace(thinkingRegex, "").trim()
-    if (text.includes("</thinking>")) {
-      isThinkingComplete = true
-    }
-  }
-  
-  return { thinking, content, isThinkingComplete }
-}
-
-// 2. Beautiful sub-component for rendering a message
-function MessageItem({ msg, isStreaming }: { msg: Message; isStreaming?: boolean }) {
-  const [isThinkingExpanded, setIsThinkingExpanded] = useState(true)
-  const { thinking, content, isThinkingComplete } = parseThinkingAndContent(msg.content)
-
-  return (
-    <div className={`flex gap-3 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-      {msg.role === 'assistant' && (
-        <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-blue-500 to-blue-700 flex items-center justify-center flex-shrink-0 mt-0.5 shadow-md shadow-blue-900/30">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
-          </svg>
-        </div>
-      )}
-      <div className={`max-w-[85%] ${msg.role === 'user'
-        ? 'bg-blue-600/25 border border-blue-500/30 rounded-2xl rounded-tr-sm px-4 py-3'
-        : 'flex-1 space-y-3'
-      }`}>
-        {msg.role === 'user' ? (
-          <p className="text-sm text-gray-100 leading-relaxed whitespace-pre-wrap">{msg.content}</p>
-        ) : (
-          <>
-            {/* Collapsible Thoughts Drawer */}
-            {thinking && (
-              <div className="border border-white/10 rounded-xl overflow-hidden bg-[#161b22]">
-                <button
-                  onClick={() => setIsThinkingExpanded(!isThinkingExpanded)}
-                  className="w-full px-4 py-2.5 flex items-center justify-between text-xs text-gray-400 hover:text-white bg-[#1b212c] transition-colors"
-                >
-                  <span className="flex items-center gap-2">
-                    {isStreaming && !isThinkingComplete ? (
-                      <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse inline-block" />
-                    ) : (
-                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-                        <polyline points="20 6 9 17 4 12"/>
-                      </svg>
-                    )}
-                    Thinking Process
-                  </span>
-                  <span className="text-[10px]">{isThinkingExpanded ? '▲' : '▼'}</span>
-                </button>
-                {isThinkingExpanded && (
-                  <div className="p-3 text-xs text-gray-400 font-mono leading-relaxed border-t border-white/5 whitespace-pre-wrap max-h-48 overflow-y-auto">
-                    {thinking}
-                  </div>
-                )}
-              </div>
-            )}
-            {/* Final Markdown Answer */}
-            {content && (
-              <MarkdownRenderer 
-                content={content} 
-                isStreaming={isStreaming && isThinkingComplete} 
-              />
-            )}
-          </>
-        )}
-      </div>
-      {msg.role === 'user' && (
-        <div className="w-7 h-7 rounded-lg bg-white/10 flex items-center justify-center flex-shrink-0 mt-0.5">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-gray-300">
-            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>
-          </svg>
-        </div>
-      )}
-    </div>
-  )
-}
-
 export default function ChatPanel() {
   const [sessions, setSessions] = useState<ChatSession[]>([])
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
@@ -249,7 +160,7 @@ export default function ChatPanel() {
         setSessions(prev => prev.map(s => s.id === activeSessionId ? { ...s, title: shortenedTitle } : s))
       }
 
-      // 2. Fetch answer from API (Streaming!)
+      // 2. Fetch answer from API (Streaming)
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -417,17 +328,78 @@ export default function ChatPanel() {
           ) : (
             <div className="max-w-3xl mx-auto px-6 py-6 space-y-8">
               {messages.map((msg, i) => (
-                <MessageItem key={i} msg={msg} />
+                <div key={i} className={`flex gap-3 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                  {msg.role === 'assistant' && (
+                    <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-blue-500 to-blue-700 flex items-center justify-center flex-shrink-0 mt-0.5 shadow-md shadow-blue-900/30">
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
+                      </svg>
+                    </div>
+                  )}
+                  <div className={`max-w-[85%] ${msg.role === 'user'
+                    ? 'bg-blue-600/25 border border-blue-500/30 rounded-2xl rounded-tr-sm px-4 py-3'
+                    : 'flex-1'
+                  }`}>
+                    {msg.role === 'user' ? (
+                      <p className="text-sm text-gray-100 leading-relaxed whitespace-pre-wrap">{msg.content}</p>
+                    ) : (
+                      <MarkdownRenderer content={msg.content} />
+                    )}
+                  </div>
+                  {msg.role === 'user' && (
+                    <div className="w-7 h-7 rounded-lg bg-white/10 flex items-center justify-center flex-shrink-0 mt-0.5">
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-gray-300">
+                        <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>
+                      </svg>
+                    </div>
+                  )}
+                </div>
               ))}
 
+              {/* Streaming Content */}
               {streamingContent && (
-                <MessageItem msg={{ role: 'assistant', content: streamingContent }} isStreaming />
+                <div className="flex gap-3 justify-start">
+                  <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-blue-500 to-blue-700 flex items-center justify-center flex-shrink-0 mt-0.5 shadow-md shadow-blue-900/30">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
+                    </svg>
+                  </div>
+                  <div className="flex-1">
+                    <MarkdownRenderer content={streamingContent} isStreaming />
+                  </div>
+                </div>
+              )}
+
+              {/* Minimal Shimmering Google-style Loading Line (No text hanging) */}
+              {loading && !streamingContent && (
+                <div className="flex gap-3 items-start">
+                  <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-blue-500 to-blue-700 flex items-center justify-center flex-shrink-0 mt-0.5 shadow-md shadow-blue-900/30">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
+                    </svg>
+                  </div>
+                  <div className="flex-1 pt-3.5">
+                    {/* Linear pulsing horizontal track like Google AI Studio */}
+                    <div className="relative w-full h-1 bg-white/5 rounded-full overflow-hidden">
+                      <div className="absolute top-0 left-0 h-full w-1/3 rounded-full bg-gradient-to-r from-blue-600 via-purple-500 to-pink-500 animate-shimmer" 
+                           style={{ animation: 'shimmer-slide 1.5s infinite linear' }} />
+                    </div>
+                  </div>
+                </div>
               )}
 
               <div ref={bottomRef} />
             </div>
           )}
         </div>
+
+        {/* CSS Animation Keyframes for our linear shimmer */}
+        <style jsx global>{`
+          @keyframes shimmer-slide {
+            0% { left: -30%; }
+            100% { left: 100%; }
+          }
+        `}</style>
 
         {/* Input bar */}
         <div className="flex-shrink-0 px-6 py-4 border-t border-white/8">
