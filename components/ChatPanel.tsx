@@ -15,7 +15,7 @@ interface ChatSession {
   created_at: string
 }
 
-// 1. Helper function to parse thoughts from content in real-time
+// Helper to parse thoughts from streaming content
 function parseThinkingAndContent(text: string) {
   const thinkingRegex = /<thinking>([\s\S]*?)(?:<\/thinking>|$)/i
   const match = text.match(thinkingRegex)
@@ -35,7 +35,7 @@ function parseThinkingAndContent(text: string) {
   return { thinking, content, isThinkingComplete }
 }
 
-// 2. UI Component for rendering a message card with dynamic thoughts extraction
+// UI component for individual chat messages
 function MessageItem({ msg, isStreaming }: { msg: Message; isStreaming?: boolean }) {
   const [isThinkingExpanded, setIsThinkingExpanded] = useState(true)
   const { thinking, content, isThinkingComplete } = parseThinkingAndContent(msg.content)
@@ -57,7 +57,6 @@ function MessageItem({ msg, isStreaming }: { msg: Message; isStreaming?: boolean
           <p className="text-sm text-gray-100 leading-relaxed whitespace-pre-wrap">{msg.content}</p>
         ) : (
           <>
-            {/* If the message contains thoughts, render them inside a custom collapsible box */}
             {thinking && (
               <div className="border border-white/10 rounded-xl overflow-hidden bg-[#161b22] mb-3">
                 <button
@@ -83,7 +82,6 @@ function MessageItem({ msg, isStreaming }: { msg: Message; isStreaming?: boolean
                 )}
               </div>
             )}
-            {/* Render the clean conversational output */}
             {content && (
               <MarkdownRenderer 
                 content={content} 
@@ -230,8 +228,61 @@ export default function ChatPanel() {
 
     if (textareaRef.current) textareaRef.current.style.height = 'auto'
 
+    // ================================================================
+    // INTERCEPTOR: If the message starts with /build or /ceo, run the company loop!
+    // ================================================================
+    if (question.startsWith('/build ') || question.startsWith('/ceo ')) {
+      const goal = question.replace(/^\/(build|ceo)\s+/i, '').trim()
+      
+      // 1. Instantly display the CEO Initialization Card to the user
+      const ceoCardText = `### CEO Agent Initialized 📋\n\nI have received your goal: **"${goal}"**.\n\nI am currently breaking down this request, establishing employee workflows, and generating a shared task checklist. Please wait a moment while the team gets to work...`
+      
+      setMessages(prev => [...prev, { role: 'assistant', content: ceoCardText }])
+      setLoading(false) // Turn off main input loading state
+
+      try {
+        // Save the CEO's card to database history
+        await supabase.from('chat_messages').insert({
+          session_id: activeSessionId,
+          role: 'assistant',
+          content: ceoCardText,
+        })
+
+        // 2. Trigger the CEO API Route to build the checklist
+        const ceoRes = await fetch('/api/agents/ceo', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ goal, sessionId: activeSessionId })
+        })
+
+        if (!ceoRes.ok) {
+          const errData = await ceoRes.json().catch(() => ({}))
+          throw new Error(errData.error || 'CEO planning failed')
+        }
+
+        const ceoData = await ceoRes.json()
+        console.log(`CEO successfully logged tasks. Checklist items:`, ceoData.tasks_created)
+
+        // 3. Immediately trigger the Supervisor Agent to kick off the employee chain!
+        fetch('/api/agents/supervisor', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' }
+        }).catch(err => console.error('Error starting supervisor from chat:', err))
+
+      } catch (err: any) {
+        console.error('AI Company initiation failure:', err)
+        setMessages(prev => [...prev, { 
+          role: 'assistant', 
+          content: `### Company Project Failed ⚠️\n\nThe CEO Agent hit an error: *"${err.message}"*. Please verify your database tables exist and try again.` 
+        }])
+      }
+      return // Exit early since we ran the company loop!
+    }
+
+    // ================================================================
+    // STANDARD CHAT EXECUTION (OpenRouter stream + memories)
+    // ================================================================
     try {
-      // 1. Save user message to database
       await supabase.from('chat_messages').insert({
         session_id: activeSessionId,
         role: 'user',
@@ -249,7 +300,6 @@ export default function ChatPanel() {
         setSessions(prev => prev.map(s => s.id === activeSessionId ? { ...s, title: shortenedTitle } : s))
       }
 
-      // 2. Fetch answer from API (Streaming)
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -309,14 +359,12 @@ export default function ChatPanel() {
       setMessages(prev => [...prev, { role: 'assistant', content: fullContent }])
       setStreamingContent('')
 
-      // 3. Save AI response to database
       await supabase.from('chat_messages').insert({
         session_id: activeSessionId,
         role: 'assistant',
         content: fullContent,
       })
 
-      // 4. Trigger Self-Learning
       fetch('/api/learn', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -416,12 +464,10 @@ export default function ChatPanel() {
             </div>
           ) : (
             <div className="max-w-3xl mx-auto px-6 py-6 space-y-8">
-              {/* WE REPLACED the old raw map loop with our beautiful, parsing MessageItem component */}
               {messages.map((msg, i) => (
                 <MessageItem key={i} msg={msg} />
               ))}
 
-              {/* WE ALSO REPLACED the raw streaming block with our MessageItem component */}
               {streamingContent && (
                 <MessageItem msg={{ role: 'assistant', content: streamingContent }} isStreaming />
               )}
@@ -465,7 +511,7 @@ export default function ChatPanel() {
                 value={input}
                 onChange={e => { setInput(e.target.value); adjustTextarea() }}
                 onKeyDown={handleKeyDown}
-                placeholder="Ask anything about your knowledge base…"
+                placeholder="Ask anything about your knowledge base, or type /build [goal] to trigger your AI team…"
                 rows={1}
                 disabled={loading}
                 className="flex-1 bg-transparent text-sm text-gray-200 placeholder-gray-600 resize-none outline-none leading-relaxed disabled:opacity-50"
@@ -484,11 +530,11 @@ export default function ChatPanel() {
               </button>
             </div>
             <p className="text-[10px] text-gray-700 text-center mt-2">
-              Enter to send · Shift+Enter for new line
+              Enter to send · Type **`/build [your request]`** to run the agent network
             </p>
           </div>
         </div>
       </div>
     </div>
   )
-}
+                }
