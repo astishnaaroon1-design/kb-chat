@@ -1,0 +1,10 @@
+# Ignore the heavy dependencies folder
+node_modules/
+
+# Ignore local environment keys
+.env*.local
+
+# Ignore next.js build outputs
+.next/
+out/
+build/
