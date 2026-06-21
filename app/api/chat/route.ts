@@ -1,8 +1,9 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
 import { embedText } from '@/lib/gemini'
 
 export const runtime = 'edge'
+export const maxDuration = 60
 
 // 2026-Compliant Free Models List on OpenRouter
 const FREE_MODELS = [
@@ -15,13 +16,31 @@ const FREE_MODELS = [
 
 export async function POST(req: NextRequest) {
   try {
-    const { messages, question } = await req.json()
+    const { messages, question, sessionId } = await req.json()
     if (!question) return new Response(JSON.stringify({ error: 'question required' }), { status: 400 })
 
     const host = req.headers.get('host') || 'localhost:3000'
     const protocol = host.includes('localhost') ? 'http' : 'https'
 
-    // 1. Fetch our active agent directory so the CEO knows who works in the company
+    // 1. Fetch current chat session details (checks for active stage & human gating)
+    const { data: session } = await supabaseAdmin
+      .from('chat_sessions')
+      .select('*')
+      .eq('id', sessionId)
+      .single()
+
+    const currentStage = session?.active_stage || 'idle'
+    const isPendingApproval = session?.pending_approval || false
+
+    // 2. Fetch our system documents (architecture_map.md)
+    const { data: archDoc } = await supabaseAdmin
+      .from('system_documents')
+      .select('content')
+      .eq('name', 'architecture_map.md')
+      .single()
+    const architectureMap = archDoc?.content || ''
+
+    // 3. Fetch our active agent directory (roster)
     const { data: roster } = await supabaseAdmin
       .from('agent_directory')
       .select('id, name, role, skills')
@@ -29,55 +48,64 @@ export async function POST(req: NextRequest) {
       ? roster.map((r: any) => `- ID: ${r.id}, Role: ${r.role}, Skills: ${r.skills.join(', ')}`).join('\n')
       : "No employees registered."
 
-    // 2. Fetch our current database backlog so the CEO can check progress
-    const { data: activeTasks } = await supabaseAdmin
-      .from('tasks')
-      .select('*')
-      .order('created_at', { ascending: true })
-
-    const backlogText = activeTasks && activeTasks.length > 0
-      ? activeTasks.map((t: any) => `- [${t.status.toUpperCase()}] ID: ${t.id}, Title: ${t.title}, Assigned to: ${t.assigned_to}, Depends on: ${t.dependency_id || 'None'}`).join('\n')
-      : "The task backlog is currently empty. No active project is running."
-
-    // 3. Generate embedding coordinates using Gemini (for lightweight semantic checks if needed)
+    // 4. Generate embedding coordinates using Gemini
     const queryEmbedding = await embedText(question)
 
-    // 4. Formulate the conversational CEO Prompt
-    let systemPrompt = `You are "Suite Copilot", the AI Chief Executive Officer (CEO) of this workspace. 
-    Your job is to coordinate a team of specialized agents, manage the database task backlog, and communicate naturally with the user.
+    // 5. Perform Hybrid Search on uploaded documents
+    const { data: relevantChunks, error: searchError } = await supabaseAdmin.rpc('match_chunks_hybrid', {
+      query_embedding: queryEmbedding,
+      query_text: question,
+      match_count: 5,
+      vector_weight: 0.6,
+      fts_weight: 0.4
+    })
+    if (searchError) throw searchError
+
+    let context = ''
+    if (relevantChunks && relevantChunks.length > 0) {
+      context = relevantChunks.map((c: any, i: number) => `[Document Source ${i + 1}]\n${c.content}`).join('\n\n---\n\n')
+    }
+
+    // 6. Build the CEO system prompt incorporating Interview and Stage Gate rules
+    let systemPrompt = `You are "Suite Copilot", the AI Chief Executive Officer (CEO) of this workspace.
+    You coordinate your team of specialized employees, manage the backlog, and converse naturally with the user.
 
     Active Employee Roster:
     ${rosterText}
 
-    Current Project Backlog:
-    ${backlogText}
+    Current System Stage: "${currentStage}"
+    Is Pending Human Approval: ${isPendingApproval ? 'YES' : 'NO'}
 
-    YOUR COGNITIVE RULES:
-    1. If the backlog is empty and the user gives a high-level goal:
-       - Break the goal down into a logical sequence of tasks (e.g. design first, then coding).
-       - Append this tool call at the very end of your response text:
-         [TOOL: create_project [{"id_label": "t1", "title": "Task Title", "description": "Instructions", "assigned_to": "agent_id", "depends_on_label": null}]]
-       - Reply to the user: "I have broken down your goal and assigned the tasks. The team is on its job! 🚀"
+    System Architecture Map (Read this before planning anything):
+    ${architectureMap}
 
-    2. If the user asks about progress or status (e.g., "how much is done?", "status?"):
-       - Read the Current Project Backlog above.
-       - Provide a warm, natural, and encouraging progress update telling the user exactly what is completed, what is active, and who is working on it.
+    YOUR COGNITIVE LOGIC RULES:
+
+    1. STAGE: "idle" (Starting a fresh project idea)
+       - Analyze the user's prompt. Does it lack critical requirements (like what language to use, specific database tables, or layout styles)?
+       - If details are missing:
+         - Activate INTERVIEW MODE. 
+         - Ask exactly ONE sharp, authentic clarifying question to get the missing detail.
+         - Append this tool call at the end: [TOOL: set_interview_stage]
+       - If requirements are completely clear:
+         - Activate STAGE GATE. Create the task roadmap using our roster.
+         - Append this tool call to freeze the pipeline and wait for approval: 
+           [TOOL: create_roadmap [{"id_label": "t1", "title": "...", "description": "...", "assigned_to": "...", "depends_on_label": null}]]
+         - Inform the user that the roadmap is ready and ask them to click "Approve & Deploy" to start.
+
+    2. STAGE: "interview" (Currently asking clarifying questions)
+       - Read the conversation history. Is the user's latest response sufficient?
+       - If you still need more details, ask the next clarifying question. Do not call any tools.
+       - If you now have enough details to proceed:
+         - Compile the full roadmap.
+         - Append the tool call: [TOOL: create_roadmap [{"id_label": "t1", "title": "...", "description": "...", "assigned_to": "...", "depends_on_label": null}]]
+         - Inform the user that the roadmap is complete and ask them to click "Approve & Deploy" to start.
+
+    3. STAGE: "gated" (Roadmap written, awaiting manual human approval)
+       - Tell the user: "Your development roadmap is compiled and frozen. Please click 'Approve & Deploy' at the top of your screen to activate the team."
        - Do not call any tools.
 
-    3. If the user asks to do something new, and there is already an active project running:
-       - Reply naturally asking them to clarify: "Is this a general question, or would you like me to add this as a new task inside our current active project?"
-       - Do not call any tools.
-
-    4. If the user replies "inside that project" or confirms they want to add a task to the active project:
-       - Add the task to the backlog.
-       - Append this tool call at the very end of your response text:
-         [TOOL: add_task {"title": "Task Title", "description": "Instructions", "assigned_to": "agent_id"}]
-       - Reply to the user: "Understood! I have added this new task to the current project. The team is on its job! 🚀"
-
-    5. If the user is just chatting, asking general questions, or discussing design details:
-       - Reply naturally and professionally. Do not call any tools.
-
-    Format your response in clean Markdown. If you call a tool, append the command exactly as shown (e.g. [TOOL: ...]) at the very end of your response text.`
+    Format your response in clean Markdown. Append the [TOOL: ...] block exactly as specified at the very end of your response text if you trigger an action.`
 
     let historyMessages = messages || []
     if (historyMessages.length > 0 && historyMessages[historyMessages.length - 1].role === 'user') {
@@ -116,7 +144,7 @@ export async function POST(req: NextRequest) {
       { role: 'user', content: question }
     ]
 
-    // 5. Try each free model on OpenRouter until one succeeds
+    // 7. Try OpenRouter free models
     let activeStream: Response | null = null
     let workingModel = ''
 
@@ -161,7 +189,7 @@ export async function POST(req: NextRequest) {
       throw new Error('All free AI models on OpenRouter are currently busy or unavailable.')
     }
 
-    // 6. Translate OpenRouter stream and execute background tools
+    // 8. Stream translation + tool execution
     const reader = activeStream.body!.getReader()
     const decoder = new TextDecoder()
     const encoder = new TextEncoder()
@@ -204,7 +232,7 @@ export async function POST(req: NextRequest) {
             }
           }
 
-          // 7. Parse and execute the tools directly on the server after streaming completes!
+          // 9. Execute tools locally on the server after stream finishes
           let toolMatch = fullContent.match(/\[TOOL:\s*(\w+)(?:\s+({.*?|\[.*?\]))?\]/)
           if (toolMatch) {
             const toolName = toolMatch[1]
@@ -215,11 +243,19 @@ export async function POST(req: NextRequest) {
               console.error('Tool args parse error:', pErr)
             }
 
-            if (toolName === 'create_project' && Array.isArray(toolArgs)) {
-              console.log('CEO: Creating new project backlog...')
+            if (toolName === 'set_interview_stage') {
+              console.log('CEO: Missing requirements. Entering Interview Mode.')
+              await supabaseAdmin
+                .from('chat_sessions')
+                .update({ active_stage: 'interview' })
+                .eq('id', sessionId)
+            }
+
+            if (toolName === 'create_roadmap' && Array.isArray(toolArgs)) {
+              console.log('CEO: Complete requirements gathered. Creating frozen backlog roadmap...')
               const labelToUuidMap: Record<string, string> = {}
 
-              // First Pass: Insert tasks that have no dependencies and generate their database UUIDs
+              // First Pass: Insert tasks
               for (const t of toolArgs) {
                 const { data: createdTask, error: insertError } = await supabaseAdmin
                   .from('tasks')
@@ -236,7 +272,7 @@ export async function POST(req: NextRequest) {
                 labelToUuidMap[t.id_label] = createdTask.id
               }
 
-              // Second Pass: Link the tasks that have dependencies
+              // Second Pass: Link dependencies
               for (const t of toolArgs) {
                 if (t.depends_on_label && labelToUuidMap[t.depends_on_label]) {
                   const activeTaskId = labelToUuidMap[t.id_label]
@@ -251,31 +287,14 @@ export async function POST(req: NextRequest) {
                 }
               }
 
-              // Trigger Supervisor Agent to start the loop
-              fetch(`${protocol}://${host}/api/agents/supervisor`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' }
-              }).catch(err => console.error('Error triggering supervisor from CEO:', err))
-            }
-
-            if (toolName === 'add_task' && toolArgs) {
-              console.log('CEO: Appending new task to current project backlog...')
-              const { error: insertError } = await supabaseAdmin
-                .from('tasks')
-                .insert({
-                  title: toolArgs.title,
-                  description: toolArgs.description,
-                  assigned_to: toolArgs.assigned_to,
-                  status: 'pending'
+              // Set session to GATED stage awaiting manual approval
+              await supabaseAdmin
+                .from('chat_sessions')
+                .update({ 
+                  active_stage: 'gated',
+                  pending_approval: true 
                 })
-
-              if (insertError) throw insertError
-
-              // Trigger Supervisor Agent
-              fetch(`${protocol}://${host}/api/agents/supervisor`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' }
-              }).catch(err => console.error('Error triggering supervisor from CEO:', err))
+                .eq('id', sessionId)
             }
           }
 
@@ -298,4 +317,4 @@ export async function POST(req: NextRequest) {
     console.error('Chat error:', err)
     return new Response(JSON.stringify({ error: err.message }), { status: 500 })
   }
-                        }
+}
