@@ -26,7 +26,7 @@ interface Task {
   dependency_id: string | null
 }
 
-// 1. Helper function to parse and clean conversational text from any backend tool codes
+// 1. Specialized helper to separate and parse thoughts from the text stream
 function parseThinkingAndContent(text: string) {
   const thinkingRegex = /<thinking>([\s\S]*?)(?:<\/thinking>|$)/i
   const match = text.match(thinkingRegex)
@@ -92,7 +92,7 @@ function MessageItem({ msg, isStreaming }: { msg: Message; isStreaming?: boolean
                   <span>{isThinkingExpanded ? '[-] CLOSE' : '[+] OPEN'}</span>
                 </button>
                 {isThinkingExpanded && (
-                  <div className="p-3 text-[11px] text-cyan-500/70 font-mono leading-relaxed border-t border-cyan-500/10 bg-[#05070e] whitespace-pre-wrap max-h-48 overflow-y-auto">
+                  <div className="p-3 text-xs text-cyan-500/70 font-mono leading-relaxed border-t border-cyan-500/10 bg-[#05070e] whitespace-pre-wrap max-h-48 overflow-y-auto">
                     {thinking}
                   </div>
                 )}
@@ -111,7 +111,7 @@ function MessageItem({ msg, isStreaming }: { msg: Message; isStreaming?: boolean
         )}
       </div>
       {msg.role === 'user' && (
-        <div className="w-7 h-7 rounded-lg bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center flex-shrink-0 mt-0.5">
+        <div className="w-7 h-7 rounded-lg bg-white/10 flex items-center justify-center flex-shrink-0 mt-0.5">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#22d3ee" strokeWidth="2">
             <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>
           </svg>
@@ -137,7 +137,7 @@ export default function ChatPanel() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, streamingContent])
 
-  // 1. Fetch chat sessions on load
+  // Fetch chat sessions on load
   useEffect(() => {
     const fetchSessions = async () => {
       try {
@@ -162,7 +162,7 @@ export default function ChatPanel() {
     fetchSessions()
   }, [])
 
-  // 2. Load messages when active session changes
+  // Load messages when active session changes
   useEffect(() => {
     if (!activeSessionId) return
 
@@ -187,7 +187,7 @@ export default function ChatPanel() {
     fetchMessages()
   }, [activeSessionId])
 
-  // 3. Live Agent Backlog Telemetry - Polls Supabase every 2 seconds
+  // Live Agent Backlog Telemetry - Polls Supabase every 2 seconds
   useEffect(() => {
     let intervalId: any
 
@@ -265,7 +265,6 @@ export default function ChatPanel() {
       })
 
       if (res.ok) {
-        // Update local session state to unlocked
         setSessions(prev => prev.map(s => s.id === activeSessionId 
           ? { ...s, pending_approval: false, active_stage: 'running' } 
           : s
@@ -384,7 +383,6 @@ export default function ChatPanel() {
         content: fullContent,
       })
 
-      // Update local session state in case the stage changed on the server
       const { data: updatedSession } = await supabase
         .from('chat_sessions')
         .select('*')
@@ -429,7 +427,7 @@ export default function ChatPanel() {
 
   return (
     <div className="flex flex-1 h-screen overflow-hidden min-w-0 hud-scanline bg-[#030611] text-cyan-100 font-mono select-none">
-      {/* 1. Tactical Left Sidebar (Conversations) */}
+      {/* 1. Left Sidebar (Threads List) */}
       <div className="w-56 flex-shrink-0 bg-[#060914]/95 border-r border-cyan-500/15 flex flex-col h-full shadow-[5px_0_15px_rgba(6,182,212,0.03)] z-10">
         <div className="p-3 border-b border-cyan-500/15 flex items-center justify-between bg-[#080d1e]/50">
           <span className="text-[10px] font-bold tracking-widest text-cyan-400">ACTIVE_THREADS</span>
@@ -482,20 +480,20 @@ export default function ChatPanel() {
             <button
               onClick={handleManualApproval}
               disabled={approving}
-              className="px-4 py-1 rounded-md bg-yellow-500 hover:bg-yellow-400 text-black text-[10px] font-bold tracking-widest shadow-[0_0_10px_rgba(234,179,8,0.3)] transition-all cursor-pointer disabled:opacity-50"
+              className="px-4 py-1 rounded-lg border border-red-500/30 hover:border-red-500 bg-red-500/10 hover:bg-red-500/20 text-red-400 hover:text-red-300 text-[10px] font-medium transition-all cursor-pointer text-center"
             >
-              {approving ? 'DEPLOYING...' : 'APPROVE & DEPLOY'}
+              Reset System (Wipe Everything)
             </button>
           </div>
         )}
 
-        <header className="flex items-center justify-between px-6 py-3.5 border-b border-cyan-500/15 flex-shrink-0 bg-[#060914]/60 backdrop-blur-md">
+        <header className="flex items-center justify-between px-6 py-3.5 border-b border-white/8 flex-shrink-0">
           <div className="flex items-center gap-3">
-            <h1 className="text-xs font-bold tracking-widest text-white uppercase">
+            <h1 className="text-sm font-semibold text-white">
               {sessions.find(s => s.id === activeSessionId)?.title || 'JARVIS_WORKSPACE'}
             </h1>
-            <span className="text-[9px] font-bold text-cyan-400 bg-cyan-950/80 border border-cyan-500/30 px-2.5 py-0.5 rounded-full tracking-wider">
-              CEO_AGENT_PORTAL
+            <span className="text-[11px] text-gray-500 bg-white/6 px-2 py-0.5 rounded-full">
+              Gemini 2.5 Flash
             </span>
           </div>
         </header>
@@ -505,24 +503,60 @@ export default function ChatPanel() {
           {isEmpty ? (
             <div className="flex flex-col items-center justify-center h-full gap-8 px-8 pb-10">
               
-              {/* Rotating Holographic SVG Core Reactor (Jarvis Core) */}
-              <div className="relative w-48 h-48 flex items-center justify-center">
-                {/* Outermost Orbit */}
-                <svg className="absolute w-full h-full animate-spin" style={{ animationDuration: '15s' }} viewBox="0 0 100 100">
-                  <circle cx="50" cy="50" r="45" fill="none" stroke="#0891b2" strokeWidth="0.5" strokeDasharray="5,15" opacity="0.4"/>
-                  <circle cx="50" cy="50" r="45" fill="none" stroke="#06b6d4" strokeWidth="1" strokeDasharray="40,60" opacity="0.6"/>
+              {/* Rotating Holographic SVG Core Reactor (Holographic Brain) */}
+              <div className="relative w-64 h-64 flex items-center justify-center">
+                {/* Background Rotating Rings */}
+                <svg className="absolute w-full h-full animate-spin" style={{ animationDuration: '20s' }} viewBox="0 0 100 100">
+                  <circle cx="50" cy="50" r="48" fill="none" stroke="#06b6d4" strokeWidth="0.25" strokeDasharray="3,12" opacity="0.3"/>
+                  <circle cx="50" cy="50" r="40" fill="none" stroke="#0891b2" strokeWidth="0.5" strokeDasharray="20,10,5,10" opacity="0.5"/>
                 </svg>
-                {/* Middle Reversed Orbit */}
-                <svg className="absolute w-[80%] h-[80%] animate-spin" style={{ animationDuration: '8s', animationDirection: 'reverse' }} viewBox="0 0 100 100">
-                  <circle cx="50" cy="50" r="40" fill="none" stroke="#f97316" strokeWidth="0.5" strokeDasharray="3,8" opacity="0.3"/>
-                  <circle cx="50" cy="50" r="40" fill="none" stroke="#0891b2" strokeWidth="1.5" strokeDasharray="15,85" opacity="0.5"/>
+                <svg className="absolute w-[80%] h-[80%] animate-spin" style={{ animationDuration: '10s', animationDirection: 'reverse' }} viewBox="0 0 100 100">
+                  <circle cx="50" cy="50" r="42" fill="none" stroke="#f97316" strokeWidth="0.5" strokeDasharray="5,15" opacity="0.3"/>
+                  <circle cx="50" cy="50" r="35" fill="none" stroke="#22d3ee" strokeWidth="1" strokeDasharray="40,5,10,5" opacity="0.5"/>
                 </svg>
-                {/* Innermost Core Circle */}
-                <div className="w-16 h-16 rounded-full bg-gradient-to-tr from-cyan-500/10 to-blue-500/30 border border-cyan-400/50 flex items-center justify-center shadow-[0_0_30px_rgba(6,182,212,0.4)] animate-pulse">
-                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#22d3ee" strokeWidth="2">
+
+                {/* Connected Neural Node Lines and Nodes */}
+                <svg className="absolute w-[90%] h-[90%] opacity-85" viewBox="0 0 120 120">
+                  {/* Connection Lines */}
+                  <line x1="60" y1="20" x2="60" y2="100" stroke="#06b6d4" strokeWidth="0.3" strokeDasharray="2,2"/>
+                  <line x1="20" y1="60" x2="100" y2="60" stroke="#06b6d4" strokeWidth="0.3" strokeDasharray="2,2"/>
+                  <line x1="30" y1="30" x2="90" y2="90" stroke="#f97316" strokeWidth="0.3" strokeDasharray="1,1"/>
+                  <line x1="30" y1="90" x2="90" y2="30" stroke="#0891b2" strokeWidth="0.3" strokeDasharray="1,1"/>
+
+                  {/* Brain Region Nodes with glowing colors */}
+                  <circle cx="60" cy="20" r="3" fill="#ef4444" className="animate-pulse"/>
+                  <circle cx="95" cy="35" r="2.5" fill="#f97316"/>
+                  <circle cx="100" cy="60" r="3" fill="#3b82f6" className="animate-pulse"/>
+                  <circle cx="20" cy="60" r="2.5" fill="#eab308"/>
+                  <circle cx="60" cy="100" r="3" fill="#22c55e" className="animate-pulse"/>
+                  <circle cx="85" cy="85" r="2" fill="#14b8a6"/>
+                </svg>
+
+                {/* Region Monospace Floating Labels */}
+                <div className="absolute top-2 text-[8px] font-bold text-red-500 bg-red-950/40 border border-red-500/20 px-1.5 py-0.2 rounded font-mono shadow-[0_0_5px_rgba(239,68,68,0.2)]">
+                  PREFRONTAL
+                </div>
+                <div className="absolute top-12 right-2 text-[8px] font-bold text-orange-500 bg-orange-950/40 border border-orange-500/20 px-1.5 py-0.2 rounded font-mono shadow-[0_0_5px_rgba(249,115,22,0.2)]">
+                  MOTOR_CORTEX
+                </div>
+                <div className="absolute right-0 top-24 text-[8px] font-bold text-blue-500 bg-blue-950/40 border border-blue-500/20 px-1.5 py-0.2 rounded font-mono shadow-[0_0_5px_rgba(59,130,246,0.2)]">
+                  SENSORY_CORTEX
+                </div>
+                <div className="absolute left-0 top-24 text-[8px] font-bold text-yellow-500 bg-yellow-950/40 border border-yellow-500/20 px-1.5 py-0.2 rounded font-mono shadow-[0_0_5px_rgba(234,179,8,0.2)]">
+                  CONCEPT_LAYER
+                </div>
+                <div className="absolute bottom-6 text-[8px] font-bold text-green-500 bg-green-950/40 border border-green-500/20 px-1.5 py-0.2 rounded font-mono shadow-[0_0_5px_rgba(34,197,94,0.2)]">
+                  HIPPOCAMPUS
+                </div>
+                <div className="absolute bottom-12 right-4 text-[8px] font-bold text-teal-500 bg-teal-950/40 border border-teal-500/20 px-1.5 py-0.2 rounded font-mono shadow-[0_0_5px_rgba(20,184,166,0.2)]">
+                  BRAINSTEM
+                </div>
+
+                {/* Central Pulsing Holographic Sphere */}
+                <div className="w-12 h-12 rounded-full bg-gradient-to-tr from-cyan-500/10 to-blue-500/20 border border-cyan-400/50 flex items-center justify-center shadow-[0_0_40px_rgba(6,182,212,0.4)] animate-pulse">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#22d3ee" strokeWidth="2">
                     <polygon points="12 2 2 7 12 12 22 7 12 2"/>
                     <polyline points="2 17 12 22 22 17"/>
-                    <polyline points="2 12 12 17 22 12"/>
                   </svg>
                 </div>
               </div>
@@ -544,7 +578,7 @@ export default function ChatPanel() {
                 <MessageItem msg={{ role: 'assistant', content: streamingContent }} isStreaming />
               )}
 
-              {/* Shimmering Loading Line */}
+              {/* Minimal Shimmering Google-style Loading Line */}
               {loading && !streamingContent && (
                 <div className="flex gap-3 items-start">
                   <div className="w-7 h-7 rounded-lg bg-[#0c1322] border border-cyan-500/30 flex items-center justify-center flex-shrink-0 mt-0.5 shadow-[0_0_8px_rgba(6,182,212,0.2)]">
@@ -576,7 +610,7 @@ export default function ChatPanel() {
                 value={input}
                 onChange={e => { setInput(e.target.value); adjustTextarea() }}
                 onKeyDown={handleKeyDown}
-                placeholder="Submit project targets or discuss logs with your CEO..."
+                placeholder="Ask anything about your knowledge base, or discuss backlog status with your CEO..."
                 rows={1}
                 disabled={loading}
                 className="flex-1 bg-transparent text-sm text-cyan-100 placeholder-cyan-500/30 resize-none outline-none leading-relaxed disabled:opacity-50 font-mono"

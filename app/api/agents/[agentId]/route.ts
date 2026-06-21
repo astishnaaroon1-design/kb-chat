@@ -4,7 +4,7 @@ import { embedText } from '@/lib/gemini'
 
 export const runtime = 'edge'
 
-// The prioritized fallback list of models
+// The prioritized fallback list of models (Prioritizing high-speed GitHub PAT)
 const FREE_MODELS = [
   { name: 'meta/llama-3.3-70b-instruct', provider: 'github' },
   { name: 'openai/gpt-4o', provider: 'github' },
@@ -42,7 +42,15 @@ export async function POST(
 
     if (agentError || !agent) throw new Error(`Agent profile for ${params.agentId} not found`)
 
-    // 3. Check if there was prior work completed by a teammate that we must build upon
+    // 3. Fetch the current system architecture_map.md to prevent token waste
+    const { data: archDoc } = await supabaseAdmin
+      .from('system_documents')
+      .select('content')
+      .eq('name', 'architecture_map.md')
+      .single()
+    const architectureMap = archDoc?.content || ''
+
+    // 4. Check if there was prior work completed by a teammate that we must build upon
     let dependencyContext = ''
     if (task.dependency_id) {
       const { data: parentTask } = await supabaseAdmin
@@ -56,9 +64,12 @@ export async function POST(
       }
     }
 
-    // 4. Formulate the highly specialized developer instructions for this worker
+    // 5. Formulate the highly specialized developer instructions for this worker
     const employeePrompt = `You are "${agent.name}" working in the role of "${agent.role}".
     Your specialized skills are: ${agent.skills.join(', ')}.
+
+    Current System Architecture Map (Review this to understand existing files, dependencies, and previous failure logs):
+    ${architectureMap}
 
     You have been assigned this specific task:
     Task Title: "${task.title}"
@@ -117,10 +128,20 @@ export async function POST(
     }
 
     if (!success || !resultText) {
+      // 6. If the employee fails, notify the Auditor to log the failure telemetry!
+      fetch(`${protocol}://${host}/api/agents/auditor`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          actionType: 'task_failed',
+          errorMsg: `Agent ${params.agentId} failed to generate deliverables for task: "${task.title}"`
+        })
+      }).catch(err => console.error('Error triggering auditor from failed employee:', err))
+
       throw new Error(`Employee agent ${params.agentId} was unable to complete the task.`)
     }
 
-    // 5. Save the completed deliverables back into Supabase and mark the task completed
+    // 7. Save the completed deliverables back into Supabase and mark the task completed
     const { error: updateError } = await supabaseAdmin
       .from('tasks')
       .update({
@@ -131,9 +152,19 @@ export async function POST(
 
     if (updateError) throw updateError
 
-    console.log(`Employee: Task "${task.title}" completed by ${params.agentId}. Notifying Supervisor...`)
+    console.log(`Employee: Task "${task.title}" completed by ${params.agentId}. Notifying Auditor & Supervisor...`)
 
-    // 6. Trigger the Supervisor Agent again to scan the backlog and unblock the next task!
+    // 8. Trigger the Auditor Agent to record our new deliverables and update architecture_map.md
+    fetch(`${protocol}://${host}/api/agents/auditor`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        actionType: 'task_completed',
+        taskId: taskId
+      })
+    }).catch(err => console.error('Error triggering auditor from completed employee:', err))
+
+    // 9. Trigger the Supervisor Agent again to scan the backlog and unblock the next task!
     fetch(`${protocol}://${host}/api/agents/supervisor`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' }
@@ -144,4 +175,4 @@ export async function POST(
     console.error(`Employee Agent ${params.agentId} error:`, err)
     return NextResponse.json({ error: err.message }, { status: 500 })
   }
-  }
+}
