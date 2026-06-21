@@ -13,6 +13,17 @@ interface ChatSession {
   id: string
   title: string
   created_at: string
+  pending_approval: boolean
+  active_stage: string
+}
+
+interface Task {
+  id: string
+  title: string
+  description: string
+  assigned_to: string
+  status: 'pending' | 'in_progress' | 'completed' | 'failed'
+  dependency_id: string | null
 }
 
 // 1. Helper function to parse and clean conversational text from any backend tool codes
@@ -46,57 +57,62 @@ function MessageItem({ msg, isStreaming }: { msg: Message; isStreaming?: boolean
   return (
     <div className={`flex gap-3 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
       {msg.role === 'assistant' && (
-        <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-blue-500 to-blue-700 flex items-center justify-center flex-shrink-0 mt-0.5 shadow-md shadow-blue-900/30">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
+        <div className="w-7 h-7 rounded-lg bg-[#0c1322] border border-cyan-500/30 flex items-center justify-center flex-shrink-0 mt-0.5 shadow-[0_0_8px_rgba(6,182,212,0.2)]">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#06b6d4" strokeWidth="2.5">
+            <polygon points="12 2 22 8.5 22 15.5 12 22 2 15.5 2 8.5"/>
+            <line x1="12" y1="2" x2="12" y2="22"/>
+            <line x1="2" y1="8.5" x2="22" y2="15.5"/>
+            <line x1="2" y1="15.5" x2="22" y2="8.5"/>
           </svg>
         </div>
       )}
       <div className={`max-w-[85%] ${msg.role === 'user'
-        ? 'bg-blue-600/25 border border-blue-500/30 rounded-2xl rounded-tr-sm px-4 py-3'
+        ? 'bg-cyan-500/10 border border-cyan-500/20 rounded-2xl rounded-tr-sm px-4 py-3 shadow-[0_0_10px_rgba(6,182,212,0.05)] text-cyan-100'
         : 'flex-1 space-y-3'
       }`}>
         {msg.role === 'user' ? (
-          <p className="text-sm text-gray-100 leading-relaxed whitespace-pre-wrap">{msg.content}</p>
+          <p className="text-sm leading-relaxed whitespace-pre-wrap">{msg.content}</p>
         ) : (
           <>
+            {/* Collapsible Thoughts Drawer */}
             {thinking && (
-              <div className="border border-white/10 rounded-xl overflow-hidden bg-[#161b22] mb-3">
+              <div className="border border-cyan-500/15 rounded-xl overflow-hidden bg-[#070b14] shadow-[0_0_8px_rgba(6,182,212,0.05)]">
                 <button
                   onClick={() => setIsThinkingExpanded(!isThinkingExpanded)}
-                  className="w-full px-4 py-2.5 flex items-center justify-between text-xs text-gray-400 hover:text-white bg-[#1b212c] transition-colors"
+                  className="w-full px-4 py-2.5 flex items-center justify-between text-[11px] font-mono tracking-wider text-cyan-400/70 hover:text-cyan-300 bg-[#0c1220]/80 transition-colors"
                 >
                   <span className="flex items-center gap-2">
                     {isStreaming && !isThinkingComplete ? (
-                      <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse inline-block" />
+                      <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping inline-block" />
                     ) : (
-                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-                        <polyline points="20 6 9 17 4 12"/>
-                      </svg>
+                      <span className="text-cyan-500 font-bold">::</span>
                     )}
-                    Thinking Process
+                    COGNITIVE_PROCESS_LOG
                   </span>
-                  <span className="text-[10px]">{isThinkingExpanded ? '▲' : '▼'}</span>
+                  <span>{isThinkingExpanded ? '[-] CLOSE' : '[+] OPEN'}</span>
                 </button>
                 {isThinkingExpanded && (
-                  <div className="p-3 text-xs text-gray-400 font-mono leading-relaxed border-t border-white/5 whitespace-pre-wrap max-h-48 overflow-y-auto">
+                  <div className="p-3 text-[11px] text-cyan-500/70 font-mono leading-relaxed border-t border-cyan-500/10 bg-[#05070e] whitespace-pre-wrap max-h-48 overflow-y-auto">
                     {thinking}
                   </div>
                 )}
               </div>
             )}
+            {/* Final Markdown Answer */}
             {content && (
-              <MarkdownRenderer 
-                content={content} 
-                isStreaming={isStreaming && isThinkingComplete} 
-              />
+              <div className="text-gray-100 bg-[#0c1220]/40 p-4 border border-white/5 rounded-2xl">
+                <MarkdownRenderer 
+                  content={content} 
+                  isStreaming={isStreaming && isThinkingComplete} 
+                />
+              </div>
             )}
           </>
         )}
       </div>
       {msg.role === 'user' && (
-        <div className="w-7 h-7 rounded-lg bg-white/10 flex items-center justify-center flex-shrink-0 mt-0.5">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-gray-300">
+        <div className="w-7 h-7 rounded-lg bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center flex-shrink-0 mt-0.5">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#22d3ee" strokeWidth="2">
             <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>
           </svg>
         </div>
@@ -109,8 +125,10 @@ export default function ChatPanel() {
   const [sessions, setSessions] = useState<ChatSession[]>([])
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
   const [messages, setMessages] = useState<Message[]>([])
+  const [tasks, setTasks] = useState<Task[]>([])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
+  const [approving, setApproveLoading] = useState(false)
   const [streamingContent, setStreamingContent] = useState('')
   const bottomRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -119,7 +137,7 @@ export default function ChatPanel() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, streamingContent])
 
-  // Fetch chat sessions on load
+  // 1. Fetch chat sessions on load
   useEffect(() => {
     const fetchSessions = async () => {
       try {
@@ -144,7 +162,7 @@ export default function ChatPanel() {
     fetchSessions()
   }, [])
 
-  // Load messages when active session changes
+  // 2. Load messages when active session changes
   useEffect(() => {
     if (!activeSessionId) return
 
@@ -168,6 +186,32 @@ export default function ChatPanel() {
 
     fetchMessages()
   }, [activeSessionId])
+
+  // 3. Live Agent Backlog Telemetry - Polls Supabase every 2 seconds
+  useEffect(() => {
+    let intervalId: any
+
+    const fetchActiveBacklog = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('tasks')
+          .select('*')
+          .order('created_at', { ascending: true })
+
+        if (error) throw error
+        if (data) {
+          setTasks(data)
+        }
+      } catch (err) {
+        console.error('Backlog fetch failed:', err)
+      }
+    }
+
+    fetchActiveBacklog()
+    intervalId = setInterval(fetchActiveBacklog, 2000)
+
+    return () => clearInterval(intervalId)
+  }, [])
 
   const createSession = async () => {
     try {
@@ -210,6 +254,32 @@ export default function ChatPanel() {
     }
   }
 
+  const handleManualApproval = async () => {
+    if (!activeSessionId || approving) return
+    setApproveLoading(true)
+    try {
+      const res = await fetch('/api/system-approve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId: activeSessionId })
+      })
+
+      if (res.ok) {
+        // Update local session state to unlocked
+        setSessions(prev => prev.map(s => s.id === activeSessionId 
+          ? { ...s, pending_approval: false, active_stage: 'running' } 
+          : s
+        ))
+      } else {
+        throw new Error('Approval request failed')
+      }
+    } catch (err: any) {
+      alert(`System Activation Error: ${err.message}`)
+    } finally {
+      setApproveLoading(false)
+    }
+  }
+
   const adjustTextarea = () => {
     const el = textareaRef.current
     if (!el) return
@@ -232,7 +302,6 @@ export default function ChatPanel() {
     if (textareaRef.current) textareaRef.current.style.height = 'auto'
 
     try {
-      // Save user message to database
       await supabase.from('chat_messages').insert({
         session_id: activeSessionId,
         role: 'user',
@@ -250,11 +319,10 @@ export default function ChatPanel() {
         setSessions(prev => prev.map(s => s.id === activeSessionId ? { ...s, title: shortenedTitle } : s))
       }
 
-      // Fetch stream answer from the CEO Agent
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: updatedMessages.slice(-10), question }),
+        body: JSON.stringify({ messages: updatedMessages.slice(-10), question, sessionId: activeSessionId }),
       })
 
       if (!res.ok) throw new Error('Request failed')
@@ -316,6 +384,17 @@ export default function ChatPanel() {
         content: fullContent,
       })
 
+      // Update local session state in case the stage changed on the server
+      const { data: updatedSession } = await supabase
+        .from('chat_sessions')
+        .select('*')
+        .eq('id', activeSessionId)
+        .single()
+
+      if (updatedSession) {
+        setSessions(prev => prev.map(s => s.id === activeSessionId ? updatedSession : s))
+      }
+
       fetch('/api/learn', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -345,19 +424,21 @@ export default function ChatPanel() {
   }
 
   const isEmpty = messages.length === 0 && !streamingContent
+  const currentSession = sessions.find(s => s.id === activeSessionId)
+  const isGated = currentSession?.pending_approval || false
 
   return (
-    <div className="flex flex-1 h-screen overflow-hidden min-w-0">
-      {/* Left Sidebar (Conversations only - Upload has been removed!) */}
-      <div className="w-56 flex-shrink-0 bg-[#0b0e14] border-r border-white/5 flex flex-col h-full">
-        <div className="p-3 border-b border-white/5 flex items-center justify-between">
-          <span className="text-xs font-semibold text-gray-400">Conversations</span>
+    <div className="flex flex-1 h-screen overflow-hidden min-w-0 hud-scanline bg-[#030611] text-cyan-100 font-mono select-none">
+      {/* 1. Tactical Left Sidebar (Conversations) */}
+      <div className="w-56 flex-shrink-0 bg-[#060914]/95 border-r border-cyan-500/15 flex flex-col h-full shadow-[5px_0_15px_rgba(6,182,212,0.03)] z-10">
+        <div className="p-3 border-b border-cyan-500/15 flex items-center justify-between bg-[#080d1e]/50">
+          <span className="text-[10px] font-bold tracking-widest text-cyan-400">ACTIVE_THREADS</span>
           <button
             onClick={createSession}
-            className="p-1 rounded-md text-gray-500 hover:text-white hover:bg-white/5 transition-colors cursor-pointer"
-            title="New Chat"
+            className="p-1 rounded border border-cyan-500/20 text-cyan-500 hover:text-white hover:bg-cyan-500/10 transition-colors cursor-pointer"
+            title="Create Thread"
           >
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
               <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
             </svg>
           </button>
@@ -367,16 +448,18 @@ export default function ChatPanel() {
             <div
               key={s.id}
               onClick={() => setActiveSessionId(s.id)}
-              className={`group flex items-center justify-between rounded-lg px-2.5 py-2 transition-all cursor-pointer text-xs
-                ${activeSessionId === s.id ? 'bg-blue-600/20 text-blue-400 border border-blue-500/20' : 'text-gray-400 hover:bg-white/3 hover:text-white border border-transparent'}`}
+              className={`group flex items-center justify-between rounded-lg px-2.5 py-2 transition-all cursor-pointer text-[11px] border
+                ${activeSessionId === s.id 
+                  ? 'bg-cyan-500/10 text-cyan-400 border-cyan-500/30 shadow-[0_0_8px_rgba(6,182,212,0.1)]' 
+                  : 'text-cyan-500/50 hover:bg-cyan-500/5 hover:text-cyan-300 border-transparent'}`}
             >
-              <span className="truncate max-w-[140px] font-medium">{s.title}</span>
+              <span className="truncate max-w-[130px]">{s.title.toUpperCase()}</span>
               <button
                 onClick={(e) => deleteSession(s.id, e)}
-                className="opacity-0 group-hover:opacity-100 hover:text-red-400 text-gray-600 transition-opacity p-0.5"
+                className="opacity-0 group-hover:opacity-100 hover:text-red-400 text-cyan-500/30 transition-opacity p-0.5"
               >
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                  <polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/>
                 </svg>
               </button>
             </div>
@@ -384,32 +467,70 @@ export default function ChatPanel() {
         </div>
       </div>
 
-      {/* Main Chat Panel */}
-      <div className="flex flex-col h-full flex-1 bg-[#0f1219] min-w-0">
-        <header className="flex items-center justify-between px-6 py-3.5 border-b border-white/8 flex-shrink-0">
+      {/* 2. Main Chat Panel with Shaded Grid */}
+      <div className="flex flex-col h-full flex-1 bg-[#030611] min-w-0 relative hud-grid">
+        
+        {/* Glowing Gated Warning Banner (CEO Stage Gate) */}
+        {isGated && (
+          <div className="absolute top-0 left-0 right-0 bg-yellow-500/10 border-b border-yellow-500/30 p-3 flex items-center justify-between z-20 backdrop-blur-md animate-pulse">
+            <div className="flex items-center gap-2.5">
+              <span className="w-2.5 h-2.5 rounded-full bg-yellow-400 animate-ping" />
+              <span className="text-[10px] font-bold text-yellow-400 tracking-wider">
+                STAGE_GATE_LOCKED: PIPELINE FROZEN AWAITING MANUAL DEPLOY
+              </span>
+            </div>
+            <button
+              onClick={handleManualApproval}
+              disabled={approving}
+              className="px-4 py-1 rounded-md bg-yellow-500 hover:bg-yellow-400 text-black text-[10px] font-bold tracking-widest shadow-[0_0_10px_rgba(234,179,8,0.3)] transition-all cursor-pointer disabled:opacity-50"
+            >
+              {approving ? 'DEPLOYING...' : 'APPROVE & DEPLOY'}
+            </button>
+          </div>
+        )}
+
+        <header className="flex items-center justify-between px-6 py-3.5 border-b border-cyan-500/15 flex-shrink-0 bg-[#060914]/60 backdrop-blur-md">
           <div className="flex items-center gap-3">
-            <h1 className="text-sm font-semibold text-white">
-              {sessions.find(s => s.id === activeSessionId)?.title || 'Suite Copilot'}
+            <h1 className="text-xs font-bold tracking-widest text-white uppercase">
+              {sessions.find(s => s.id === activeSessionId)?.title || 'JARVIS_WORKSPACE'}
             </h1>
-            <span className="text-[11px] text-gray-500 bg-white/6 px-2 py-0.5 rounded-full">
-              CEO Agent Portal
+            <span className="text-[9px] font-bold text-cyan-400 bg-cyan-950/80 border border-cyan-500/30 px-2.5 py-0.5 rounded-full tracking-wider">
+              CEO_AGENT_PORTAL
             </span>
           </div>
         </header>
 
-        {/* Messages */}
+        {/* Messages and Visual core */}
         <div className="flex-1 overflow-y-auto">
           {isEmpty ? (
-            <div className="flex flex-col items-center justify-center h-full gap-6 px-8 pb-20">
-              <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-blue-500 to-blue-700 flex items-center justify-center shadow-lg shadow-blue-900/30">
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+            <div className="flex flex-col items-center justify-center h-full gap-8 px-8 pb-10">
+              
+              {/* Rotating Holographic SVG Core Reactor (Jarvis Core) */}
+              <div className="relative w-48 h-48 flex items-center justify-center">
+                {/* Outermost Orbit */}
+                <svg className="absolute w-full h-full animate-spin" style={{ animationDuration: '15s' }} viewBox="0 0 100 100">
+                  <circle cx="50" cy="50" r="45" fill="none" stroke="#0891b2" strokeWidth="0.5" strokeDasharray="5,15" opacity="0.4"/>
+                  <circle cx="50" cy="50" r="45" fill="none" stroke="#06b6d4" strokeWidth="1" strokeDasharray="40,60" opacity="0.6"/>
                 </svg>
+                {/* Middle Reversed Orbit */}
+                <svg className="absolute w-[80%] h-[80%] animate-spin" style={{ animationDuration: '8s', animationDirection: 'reverse' }} viewBox="0 0 100 100">
+                  <circle cx="50" cy="50" r="40" fill="none" stroke="#f97316" strokeWidth="0.5" strokeDasharray="3,8" opacity="0.3"/>
+                  <circle cx="50" cy="50" r="40" fill="none" stroke="#0891b2" strokeWidth="1.5" strokeDasharray="15,85" opacity="0.5"/>
+                </svg>
+                {/* Innermost Core Circle */}
+                <div className="w-16 h-16 rounded-full bg-gradient-to-tr from-cyan-500/10 to-blue-500/30 border border-cyan-400/50 flex items-center justify-center shadow-[0_0_30px_rgba(6,182,212,0.4)] animate-pulse">
+                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#22d3ee" strokeWidth="2">
+                    <polygon points="12 2 2 7 12 12 22 7 12 2"/>
+                    <polyline points="2 17 12 22 22 17"/>
+                    <polyline points="2 12 12 17 22 12"/>
+                  </svg>
+                </div>
               </div>
-              <div className="text-center">
-                <h2 className="text-lg font-semibold text-white mb-2">CEO Agent Portal</h2>
-                <p className="text-sm text-gray-500 max-w-sm leading-relaxed">
-                  Discuss project goals, check task progress, or add sub-tasks naturally. Your active developer agents will process them autonomously.
+
+              <div className="text-center max-w-sm">
+                <h2 className="text-sm font-bold text-cyan-400 tracking-widest uppercase mb-1.5">JARVIS COGNITIVE CORE V1</h2>
+                <p className="text-[11px] text-cyan-500/70 leading-relaxed font-mono">
+                  DIRECTIVES: Input project specifications. The CEO Agent will parse instructions and deploy holographic workspaces.
                 </p>
               </div>
             </div>
@@ -423,17 +544,17 @@ export default function ChatPanel() {
                 <MessageItem msg={{ role: 'assistant', content: streamingContent }} isStreaming />
               )}
 
-              {/* Minimal Shimmering Google-style Loading Line */}
+              {/* Shimmering Loading Line */}
               {loading && !streamingContent && (
                 <div className="flex gap-3 items-start">
-                  <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-blue-500 to-blue-700 flex items-center justify-center flex-shrink-0 mt-0.5 shadow-md shadow-blue-900/30">
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
+                  <div className="w-7 h-7 rounded-lg bg-[#0c1322] border border-cyan-500/30 flex items-center justify-center flex-shrink-0 mt-0.5 shadow-[0_0_8px_rgba(6,182,212,0.2)]">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#06b6d4" strokeWidth="2.5">
+                      <polygon points="12 2 22 8.5 22 15.5 12 22 2 15.5 2 8.5"/>
                     </svg>
                   </div>
                   <div className="flex-1 pt-3.5">
-                    <div className="relative w-full h-1 bg-white/5 rounded-full overflow-hidden">
-                      <div className="absolute top-0 left-0 h-full w-1/3 rounded-full bg-gradient-to-r from-blue-600 via-purple-500 to-pink-500 animate-shimmer" 
+                    <div className="relative w-full h-1 bg-cyan-950/40 rounded-full overflow-hidden border border-cyan-500/10">
+                      <div className="absolute top-0 left-0 h-full w-1/3 rounded-full bg-gradient-to-r from-cyan-500 via-blue-500 to-indigo-500" 
                            style={{ animation: 'shimmer-slide 1.5s infinite linear' }} />
                     </div>
                   </div>
@@ -445,27 +566,20 @@ export default function ChatPanel() {
           )}
         </div>
 
-        <style jsx global>{`
-          @keyframes shimmer-slide {
-            0% { left: -30%; }
-            100% { left: 100%; }
-          }
-        `}</style>
-
         {/* Input bar */}
-        <div className="flex-shrink-0 px-6 py-4 border-t border-white/8">
+        <div className="flex-shrink-0 px-6 py-4 border-t border-cyan-500/15 bg-[#060914]/50 backdrop-blur-md">
           <div className="max-w-3xl mx-auto">
-            <div className={`flex items-end gap-3 bg-white/5 border rounded-2xl px-4 py-3 transition-colors
-              ${loading ? 'border-white/8' : 'border-white/10 hover:border-white/15 focus-within:border-blue-500/60 focus-within:bg-white/7'}`}>
+            <div className={`flex items-end gap-3 bg-[#080d1d]/60 border rounded-2xl px-4 py-3 transition-colors
+              ${loading ? 'border-cyan-500/10' : 'border-cyan-500/15 hover:border-cyan-500/30 focus-within:border-cyan-500/60 focus-within:bg-[#090f22]/80 focus-within:shadow-[0_0_15px_rgba(6,182,212,0.05)]'}`}>
               <textarea
                 ref={textareaRef}
                 value={input}
                 onChange={e => { setInput(e.target.value); adjustTextarea() }}
                 onKeyDown={handleKeyDown}
-                placeholder="Discuss project plans, check progress, or add sub-tasks naturally..."
+                placeholder="Submit project targets or discuss logs with your CEO..."
                 rows={1}
                 disabled={loading}
-                className="flex-1 bg-transparent text-sm text-gray-200 placeholder-gray-600 resize-none outline-none leading-relaxed disabled:opacity-50"
+                className="flex-1 bg-transparent text-sm text-cyan-100 placeholder-cyan-500/30 resize-none outline-none leading-relaxed disabled:opacity-50 font-mono"
                 style={{ minHeight: '24px', maxHeight: '200px' }}
               />
               <button
@@ -473,19 +587,134 @@ export default function ChatPanel() {
                 disabled={!input.trim() || loading}
                 className="flex-shrink-0 w-8 h-8 rounded-xl flex items-center justify-center transition-all cursor-pointer
                   disabled:opacity-30 disabled:cursor-not-allowed
-                  bg-blue-600 hover:bg-blue-500 active:scale-95 disabled:bg-white/10"
+                  bg-cyan-600 hover:bg-cyan-500 active:scale-95 disabled:bg-cyan-950/20 border border-cyan-500/30"
               >
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                   <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
                 </svg>
               </button>
             </div>
-            <p className="text-[10px] text-gray-700 text-center mt-2">
-              Enter to send · Shift+Enter for new line
+            <p className="text-[10px] text-cyan-500/40 text-center mt-2 tracking-wide">
+              ENTER_TO_TRANSMIT · SHIFT+ENTER_NEW_LINE
             </p>
           </div>
         </div>
       </div>
+
+      {/* 3. Holographic Agent Telemetry & Checklist (Right Column) */}
+      <div className="w-64 flex-shrink-0 bg-[#060914]/95 border-l border-cyan-500/15 flex flex-col h-full shadow-[-5px_0_15px_rgba(6,182,212,0.03)] z-10">
+        <div className="p-3 border-b border-cyan-500/15 bg-[#080d1e]/50 flex items-center justify-between">
+          <span className="text-[10px] font-bold tracking-widest text-cyan-400">AGENT_TELEMETRY</span>
+          <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-3 space-y-4">
+          
+          {/* Work Status Card */}
+          <div className="border border-cyan-500/15 rounded-xl p-3 bg-[#080d1e]/40 shadow-[0_0_10px_rgba(6,182,212,0.02)]">
+            <span className="text-[9px] font-bold text-cyan-500/50 block tracking-widest mb-2.5">WORKSPACE_STATUS</span>
+            {tasks.length === 0 ? (
+              <div className="space-y-1.5">
+                <div className="text-xs text-cyan-400 flex items-center gap-1.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-cyan-500" />
+                  STATUS: IDLE
+                </div>
+                <p className="text-[10px] text-cyan-500/50 leading-relaxed">
+                  Awaiting ingestion directives. Submit a goal to initialize the backlog pipeline.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <div className="text-xs text-yellow-400 flex items-center gap-1.5 animate-pulse">
+                  <span className="w-1.5 h-1.5 rounded-full bg-yellow-400 inline-block" />
+                  STATUS: PROCESSING
+                </div>
+                <div className="text-[10px] text-cyan-500/70 leading-relaxed font-mono">
+                  - Total Tasks: {tasks.length} <br />
+                  - Completed: {tasks.filter(t => t.status === 'completed').length} <br />
+                  - Active: {tasks.filter(t => t.status === 'in_progress').length}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Floating Live Checklist */}
+          {tasks.length > 0 && (
+            <div className="space-y-2.5">
+              <span className="text-[9px] font-bold text-cyan-500/50 block tracking-widest">TASK_MATRIX_LOG</span>
+              <div className="space-y-2">
+                {tasks.map(t => (
+                  <div key={t.id} className="border border-cyan-500/10 rounded-lg p-2.5 bg-[#080d1e]/20 space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-bold text-cyan-200 truncate max-w-[130px]" title={t.title}>
+                        {t.title.toUpperCase()}
+                      </span>
+                      {/* State Badges */}
+                      {t.status === 'completed' && (
+                        <span className="text-[9px] text-green-400 border border-green-500/30 px-1.5 py-0.2 rounded bg-green-500/5">
+                          DONE
+                        </span>
+                      )}
+                      {t.status === 'in_progress' && (
+                        <span className="text-[9px] text-cyan-400 border border-cyan-500/30 px-1.5 py-0.2 rounded bg-cyan-500/5 animate-pulse">
+                          RUNNING
+                        </span>
+                      )}
+                      {t.status === 'pending' && (
+                        <span className="text-[9px] text-cyan-500/30 border border-cyan-500/10 px-1.5 py-0.2 rounded bg-white/2">
+                          GATED
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[9px] text-cyan-500/60 leading-normal line-clamp-2">
+                      {t.description}
+                    </p>
+                    <div className="text-[9px] text-cyan-500/40 font-bold tracking-wider">
+                      AGENT: {t.assigned_to.toUpperCase()}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+        </div>
+
+        {/* Footer */}
+        <div className="p-3 border-t border-cyan-500/15 bg-[#080d1e]/50 text-center">
+          <p className="text-[8px] text-cyan-500/30 tracking-widest">
+            COGNITIVE_GRID_ESTABLISHED
+          </p>
+        </div>
+      </div>
+
+      {/* Global Sci-Fi CSS Overlays */}
+      <style jsx global>{`
+        .hud-grid {
+          background-size: 30px 30px;
+          background-image: 
+            linear-gradient(to right, rgba(6, 182, 212, 0.02) 1px, transparent 1px),
+            linear-gradient(to bottom, rgba(6, 182, 212, 0.02) 1px, transparent 1px);
+        }
+        .hud-scanline {
+          position: relative;
+          overflow: hidden;
+        }
+        .hud-scanline::after {
+          content: " ";
+          display: block;
+          position: absolute;
+          top: 0; left: 0; bottom: 0; right: 0;
+          background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.15) 50%), linear-gradient(90deg, rgba(255, 0, 0, 0.03), rgba(0, 255, 0, 0.01), rgba(0, 0, 255, 0.03));
+          z-index: 2;
+          background-size: 100% 2px, 3px 100%;
+          pointer-events: none;
+        }
+        @keyframes shimmer-slide {
+          0% { left: -30%; }
+          100% { left: 100%; }
+        }
+      `}</style>
     </div>
   )
-  }
+}
